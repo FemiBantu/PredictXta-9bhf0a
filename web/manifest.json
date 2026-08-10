@@ -1,0 +1,104 @@
+{
+  "id": "/",
+  "name": "PredictXta - AI Sports Predictions",
+  "short_name": "PredictXta",
+  "description": "AI-powered sports predictions, live scores, and expert analysis for 12+ sports.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui", "browser"],
+  "orientation": "portrait",
+  "shortcuts": [
+    {
+      "name": "AI Picks",
+      "short_name": "AI Picks",
+      "description": "View today's AI predictions",
+      "url": "/(tabs)/predictions",
+      "icons": [{ "src": "/assets/logo.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Live Scores",
+      "short_name": "Live",
+      "description": "Watch live match scores in real-time",
+      "url": "/(tabs)/live",
+      "icons": [{ "src": "/assets/logo.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Daily Challenge",
+      "short_name": "Challenge",
+      "description": "Pick today's challenge matches and earn coins",
+      "url": "/challenge",
+      "icons": [{ "src": "/assets/logo.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "theme_color": "#070B14",
+  "background_color": "#070B14",
+  "lang": "en",
+  "categories": ["sports", "entertainment", "utilities"],
+  "iarc_rating_id": "",
+  "icons": [
+    {
+      "src": "/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/assets/screenshots/screenshot-01-home.png",
+      "sizes": "750x1334",
+      "type": "image/png",
+      "label": "Home Dashboard — AI picks & live hero match",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "/assets/screenshots/screenshot-02-live.png",
+      "sizes": "750x1334",
+      "type": "image/png",
+      "label": "Live Scores — Real-time SSE stream",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "/assets/screenshots/screenshot-03-predictions.png",
+      "sizes": "750x1334",
+      "type": "image/png",
+      "label": "AI Predictions — Confidence analysis",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "/assets/screenshots/screenshot-04-sports.png",
+      "sizes": "750x1334",
+      "type": "image/png",
+      "label": "21+ Sports — Multi-sport coverage",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "/assets/screenshots/screenshot-05-vip.png",
+      "sizes": "750x1334",
+      "type": "image/png",
+      "label": "VIP Premium — Expert tips & coins",
+      "form_factor": "narrow"
+    }
+  ],
+  "prefer_related_applications": false,
+  "related_applications": []
+}

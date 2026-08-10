@@ -1,0 +1,58 @@
+##############################################################################
+#  PredictXta · Cloudflare Workers Configuration
+#  wrangler.toml — deploy with: npx wrangler deploy
+#
+#  Architecture:
+#   Mobile App → Cloudflare Workers (edge) → OnSpace Edge Functions (origin)
+#
+#  Workers:
+#   1. px-gateway      — Main API gateway (rate limiting, caching, WAF, auth)
+#   2. sports-cache    — KV-backed sports data cache manager
+##############################################################################
+
+name = "px-gateway"
+main = "workers/px-gateway.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Account / Zone (injected from environment or wrangler secrets) ─────────────
+# Set these via: npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
+# Or set in .dev.vars for local development
+
+# ── KV Namespaces ──────────────────────────────────────────────────────────────
+# Create with: npx wrangler kv:namespace create "PX_CACHE"
+# Then replace the id below with the generated namespace ID
+[[kv_namespaces]]
+binding = "PX_CACHE"
+id = "replace_with_your_kv_namespace_id"
+preview_id = "replace_with_your_preview_kv_namespace_id"
+
+# ── Environment Variables (non-secret) ────────────────────────────────────────
+[vars]
+ENVIRONMENT = "production"
+ONSPACE_BASE_URL = "https://osmkbrryalhtpnayosmk.backend.onspace.ai"
+# Rate limit tiers (requests per 60s window)
+RATE_LIMIT_FREE = "100"
+RATE_LIMIT_VIP = "500"
+RATE_LIMIT_ANON = "30"
+# Cache TTLs (seconds)
+CACHE_TTL_LIVE = "15"
+CACHE_TTL_FEED = "30"
+CACHE_TTL_PREDICTIONS = "300"
+CACHE_TTL_STANDINGS = "3600"
+CACHE_TTL_NEWS = "900"
+CACHE_TTL_ODDS = "60"
+
+# ── Secrets (set via wrangler secret put) ─────────────────────────────────────
+# npx wrangler secret put PX_SIGNING_SECRET
+# npx wrangler secret put SUPABASE_ANON_KEY
+# (All other secrets remain server-side in OnSpace Edge Functions only)
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
+# Uncomment and update when you have a custom domain configured in Cloudflare
+# [[routes]]
+# pattern = "api.predictxta.com/*"
+# zone_name = "predictxta.com"
+
+# ── Sports Cache Worker (separate deployment) ─────────────────────────────────
+# Deploy with: npx wrangler deploy --config cloudflare/wrangler-cache.toml

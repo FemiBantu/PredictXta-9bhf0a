@@ -1,0 +1,50 @@
+{
+  "_comment": "⚠️  PLACEHOLDER — Replace with your real google-services.json from Firebase Console",
+  "_instructions": [
+    "1. Go to https://console.firebase.google.com",
+    "2. Select or create your project (e.g. 'predictxta-c6bcb')",
+    "3. Click the Android icon to add an Android app",
+    "4. Package name: com.predictxta.sports",
+    "5. App nickname: PredictXta Android",
+    "6. Download google-services.json and replace this file",
+    "7. NEVER commit the real file to git — add it to .gitignore",
+    "8. For EAS Build, upload via: eas secret:create --name GOOGLE_SERVICES_JSON --value @./google-services.json"
+  ],
+  "project_info": {
+    "project_number": "409581654804",
+    "project_id": "predictxta-c6bcb",
+    "storage_bucket": "predictxta-c6bcb.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:409581654804:android:708e96fccdd7ef96ef6801",
+        "android_client_info": {
+          "package_name": "com.predictxta.sports"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "YOUR_ANDROID_API_KEY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "YOUR_WEB_CLIENT_ID.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

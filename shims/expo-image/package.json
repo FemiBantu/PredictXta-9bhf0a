@@ -1,0 +1,9 @@
+{
+  "name": "expo-image",
+  "version": "0.0.1",
+  "main": "index.js",
+  "description": "Web shim for expo-image",
+  "expo": {
+    "autolinking": false
+  }
+}

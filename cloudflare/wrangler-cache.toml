@@ -1,0 +1,25 @@
+##############################################################################
+#  PredictXta · px-cache-manager Worker Configuration
+#  Deploy with: npx wrangler deploy --config cloudflare/wrangler-cache.toml
+##############################################################################
+
+name = "px-cache-manager"
+main = "workers/sports-cache.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── KV Namespace (same namespace as px-gateway) ────────────────────────────────
+# Use the SAME namespace IDs generated in Step 2 of DEPLOYMENT.md
+[[kv_namespaces]]
+binding = "PX_CACHE"
+id = "replace_with_your_kv_namespace_id"
+preview_id = "replace_with_your_preview_kv_namespace_id"
+
+# ── Environment Variables ──────────────────────────────────────────────────────
+[vars]
+ENVIRONMENT = "production"
+ONSPACE_BASE_URL = "https://osmkbrryalhtpnayosmk.backend.onspace.ai"
+
+# ── Secrets (set via wrangler secret put --config cloudflare/wrangler-cache.toml) ─
+# npx wrangler secret put PX_SIGNING_SECRET --config cloudflare/wrangler-cache.toml
+# npx wrangler secret put SUPABASE_ANON_KEY --config cloudflare/wrangler-cache.toml

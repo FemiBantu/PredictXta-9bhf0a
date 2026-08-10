@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ⚠️  PLACEHOLDER — Replace with your real GoogleService-Info.plist from Firebase Console
+
+  Instructions:
+  1. Go to https://console.firebase.google.com
+  2. Select or create your project (e.g. 'predictxta-c6bcb')
+  3. Click the iOS icon to add an iOS app
+  4. Bundle ID: com.predictxta.sports
+  5. App nickname: PredictXta iOS
+  6. Download GoogleService-Info.plist and replace this file
+  7. NEVER commit the real file to git — add it to .gitignore
+  8. For EAS Build: eas secret:create - -name GOOGLE_SERVICES_PLIST - -value @./GoogleService-Info.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>CLIENT_ID</key>
+  <string>YOUR_IOS_CLIENT_ID.apps.googleusercontent.com</string>
+  <key>REVERSED_CLIENT_ID</key>
+  <string>com.googleusercontent.apps.YOUR_REVERSED_CLIENT_ID</string>
+  <key>API_KEY</key>
+  <string>YOUR_IOS_API_KEY</string>
+  <key>GCM_SENDER_ID</key>
+  <string>409581654804</string>
+  <key>PLIST_VERSION</key>
+  <string>1</string>
+  <key>BUNDLE_ID</key>
+  <string>com.predictxta.sports</string>
+  <key>PROJECT_ID</key>
+  <string>predictxta-c6bcb</string>
+  <key>STORAGE_BUCKET</key>
+  <string>predictxta-c6bcb.appspot.com</string>
+  <key>IS_ADS_ENABLED</key>
+  <false/>
+  <key>IS_ANALYTICS_ENABLED</key>
+  <false/>
+  <key>IS_APPINVITE_ENABLED</key>
+  <true/>
+  <key>IS_GCM_ENABLED</key>
+  <true/>
+  <key>IS_SIGNIN_ENABLED</key>
+  <true/>
+  <key>GOOGLE_APP_ID</key>
+  <string>1:409581654804:ios:2f29fa76a637e4b1ef6801</string>
+</dict>
+</plist>

@@ -1,0 +1,14 @@
+{
+  "name": "expo-video",
+  "version": "2.0.6",
+  "description": "No-op shim — prevents VideoCache SimpleCache duplicate on Android",
+  "main": "index.js",
+  "react-native": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./*": "./index.js"
+  },
+  "expo": {
+    "autolinking": false
+  }
+}

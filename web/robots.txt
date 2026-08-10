@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+
+# Block admin and internal routes from indexing
+Disallow: /admin
+Disallow: /admin-*
+Disallow: /oauth-debug
+Disallow: /deep-link-diagnostics
+Disallow: /deployment-checklist
+Disallow: /sport-coverage-test
+Disallow: /audit-report
+Disallow: /account-deletion-request
+Disallow: /account-deleted
+Disallow: /reset-password
+Disallow: /auth/
+
+# Sitemap
+Sitemap: https://predictxta.app/sitemap.xml
