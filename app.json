@@ -1,0 +1,232 @@
+
+ {
+  "expo": {
+    "name": "PredictXta",
+    "slug": "predictxta",
+    "version": "1.0.1",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "orientation": "portrait",
+    "icon": "./assets/logo.png",
+    "scheme": "predictxta",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.predictxta.sports",
+      "buildNumber": "2",
+      "requireFullScreen": false,
+      "usesAppleSignIn": true,
+      "entitlements": {
+        "aps-environment": "production"
+      },
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+            "NSPrivacyAccessedAPITypeReasons": ["C617.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategorySystemBootTime",
+            "NSPrivacyAccessedAPITypeReasons": ["35F9.1"]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryDiskSpace",
+            "NSPrivacyAccessedAPITypeReasons": ["E174.1"]
+          }
+        ]
+      },
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["predictxta"],
+            "CFBundleURLName": "com.predictxta.sports",
+            "CFBundleTypeRole": "Editor"
+          }
+        ],
+        "SKAdNetworkItems": [],
+        "NSCameraUsageDescription": "Used to take profile photos",
+        "NSPhotoLibraryUsageDescription": "Used to select profile photos",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSExceptionDomains": {
+            "localhost": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": true
+            }
+          }
+        }
+      }
+    },
+    "android": {
+      "package": "com.predictxta.sports",
+      "versionCode": 2,
+      "googleServicesFile": "./google-services.json",
+      "icon": "./assets/logo.png",
+      "minSdkVersion": 24,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#0A0F1E"
+      },
+      "edgeToEdgeEnabled": true,
+      "allowBackup": false,
+      "softwareKeyboardLayoutMode": "pan",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            { "scheme": "predictxta" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "predictxta",
+              "host": "auth"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "predictxta",
+              "host": "auth",
+              "pathPrefix": "/callback"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "predictxta",
+              "host": "auth",
+              "path": "/callback"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "predictxta",
+              "host": "login-callback"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "predictxta",
+              "host": "reset-password"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "predictxta",
+              "host": "account-deleted"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/logo.png",
+      "name": "PredictXta - AI Sports Predictions",
+      "shortName": "PredictXta",
+      "description": "AI-powered sports predictions, live scores, and expert analysis for 12+ sports.",
+      "themeColor": "#070B14",
+      "backgroundColor": "#070B14",
+      "lang": "en",
+      "scope": "/",
+      "startUrl": "/",
+      "display": "standalone",
+      "orientation": "portrait"
+    },
+    "updates": {
+      "enabled": false,
+      "url": "https://u.expo.dev/9c9238ac-123c-4ff5-966d-b3a036b0d66a",
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "NEVER"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-web-browser",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#070B14"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/logo.png",
+          "color": "#FFD700",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PredictXta needs access to your photos to set a profile picture.",
+          "cameraPermission": "PredictXta needs access to your camera to take a profile photo."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "9c9238ac-123c-4ff5-966d-b3a036b0d66a"
+      },
+      "storybookEnabled": false,
+      "firebaseProjectId": "predictxta-app",
+      "supportEmail": "support@predictxta.app",
+      "privacyPolicyUrl": "https://predictxta.app/privacy",
+      "termsUrl": "https://predictxta.app/terms"
+    },
+    "owner": "predictxta"
+  }
+}

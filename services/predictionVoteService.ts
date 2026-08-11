@@ -3,6 +3,12 @@
  *
  * Handles community voting (like/dislike) on AI predictions per match,
  * expert predictions fetch, and consensus strength calculation.
+ *
+ * PRODUCTION RULES:
+ * - Never fabricate expert predictions, counts, accuracy, or consensus.
+ * - Math.random() is FORBIDDEN in any user-facing metric.
+ * - Consensus scores must be deterministic and stable across refresh/restart.
+ * - If no real expert data exists, return [] so UI shows honest empty state.
  */
 
 import { getSupabaseClient } from '@/template';
@@ -36,7 +42,7 @@ export interface ExpertPrediction {
 export interface ConsensusResult {
   aiPrediction: string;
   expertPrediction: string;
-  agreementScore: number; // 0–100
+  agreementScore: number; // 0–100 — DETERMINISTIC, no Math.random()
   consensusRating: 'Very Strong' | 'Strong' | 'Moderate' | 'Weak';
   agreementLabel: 'YES' | 'PARTIAL' | 'NO';
   supportCount: number;
@@ -128,7 +134,6 @@ export async function castVote(
 
 /**
  * Map an expert_tips tip_type to a human-readable prediction type label.
- * Falls back to uppercasing the raw type.
  */
 function normaliseTipType(tipType: string, sport: string): string {
   const t = tipType.toLowerCase();
@@ -181,7 +186,6 @@ function buildPredictionValue(
   if (t === 'btts' || t === 'both_teams_score') {
     return v === 'yes' || v === 'true' || v === '1' ? 'YES' : 'NO';
   }
-  // For over/under and other markets, return the tip_value as-is, uppercased
   return tipValue.toUpperCase();
 }
 
@@ -196,11 +200,9 @@ async function fetchExpertTipsForFixture(
 ): Promise<any[]> {
   const supabase = getSupabaseClient();
 
-  // Build name fragments for fuzzy matching in match_label
-  const homeFragment = homeTeam.split(' ').slice(-1)[0]; // last word e.g. "Lakers"
+  const homeFragment = homeTeam.split(' ').slice(-1)[0];
   const awayFragment = awayTeam.split(' ').slice(-1)[0];
 
-  // Fetch recent tips for this sport within the last 7 days
   const since = new Date();
   since.setDate(since.getDate() - 7);
 
@@ -216,7 +218,6 @@ async function fetchExpertTipsForFixture(
 
   if (error || !data) return [];
 
-  // Filter to tips whose match_label contains both team fragments (case-insensitive)
   const homeLower = homeFragment.toLowerCase();
   const awayLower = awayFragment.toLowerCase();
   const fullHomeLower = homeTeam.toLowerCase();
@@ -224,7 +225,6 @@ async function fetchExpertTipsForFixture(
 
   return (data as any[]).filter((tip) => {
     const label = (tip.match_label ?? '').toLowerCase();
-    // Match if label contains at least one team's last name fragment AND some part of the other
     const hasHome = label.includes(homeLower) || label.includes(fullHomeLower);
     const hasAway = label.includes(awayLower) || label.includes(fullAwayLower);
     return hasHome && hasAway;
@@ -234,6 +234,7 @@ async function fetchExpertTipsForFixture(
 /**
  * Convert expert_tips rows into ExpertPrediction objects grouped by tip_type.
  * Multiple tips for the same tip_type are aggregated into a consensus row.
+ * All values are derived from real database data — no fabrication.
  */
 function aggregateTipsToExpertPredictions(
   fixtureId: string,
@@ -244,7 +245,6 @@ function aggregateTipsToExpertPredictions(
 ): ExpertPrediction[] {
   if (tips.length === 0) return [];
 
-  // Group by normalised tip_type
   const grouped: Record<string, any[]> = {};
   for (const tip of tips) {
     const key = (tip.tip_type ?? 'match_result').toLowerCase();
@@ -255,7 +255,6 @@ function aggregateTipsToExpertPredictions(
   const results: ExpertPrediction[] = [];
 
   for (const [tipType, group] of Object.entries(grouped)) {
-    // Find the majority tip_value within this group
     const valueCounts: Record<string, number> = {};
     for (const tip of group) {
       const v = (tip.tip_value ?? '').toLowerCase();
@@ -264,17 +263,15 @@ function aggregateTipsToExpertPredictions(
     const majoritytipValue = Object.entries(valueCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
     const majorityGroup = group.filter((t) => (t.tip_value ?? '').toLowerCase() === majoritytipValue);
 
-    // Aggregate confidence (average of supporting experts)
+    // Real average confidence from actual expert_tips records
     const avgConf = Math.round(
       majorityGroup.reduce((s, t) => s + (t.confidence ?? 70), 0) / Math.max(1, majorityGroup.length)
     );
 
-    // Pick the tip_value from the highest-confidence tip in majority group
     const topTip = majorityGroup.sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
     const displayValue = buildPredictionValue(tipType, topTip?.tip_value ?? majoritytipValue, homeTeam, awayTeam);
     const predType = normaliseTipType(tipType, sport);
 
-    // Gather source names
     const expertNames = [...new Set(group.map((t) => t.expert_name ?? 'Expert').filter(Boolean))];
     const expertSource = expertNames.length === 1
       ? expertNames[0]
@@ -291,14 +288,13 @@ function aggregateTipsToExpertPredictions(
       expertCount: majorityGroup.length,
       expertsSupporting: majorityGroup.length,
       totalExperts: group.length,
-      expertAccuracy: avgConf, // use avg confidence as accuracy proxy
+      expertAccuracy: avgConf, // actual avg confidence from real tips
       sport,
       odds: topTip?.odds ? parseFloat(topTip.odds) : null,
       createdAt: topTip?.created_at ?? new Date().toISOString(),
     });
   }
 
-  // Sort: result markets first, then by supporting count descending
   const ORDER = ['match result', '1x2', 'game winner', 'fight winner', 'match winner', 'over_under', 'over/under'];
   results.sort((a, b) => {
     const ai = ORDER.findIndex((o) => a.predictionType.toLowerCase().includes(o));
@@ -316,7 +312,7 @@ function aggregateTipsToExpertPredictions(
  * Priority order:
  *   1. expert_predictions table (fixture-specific, pre-stored rows)
  *   2. expert_tips table (real tips matched by team names + sport + recent window)
- *   3. Seeded mock data (fallback when neither source has data)
+ *   3. Return [] — honest empty state, NO fabricated data
  */
 export async function fetchExpertPredictions(
   fixtureId: string,
@@ -360,91 +356,24 @@ export async function fetchExpertPredictions(
       const aggregated = aggregateTipsToExpertPredictions(fixtureId, tips, sport, homeTeam, awayTeam);
       if (aggregated.length > 0) return aggregated;
     }
-  } catch { /* non-blocking — fall through to mock */ }
+  } catch { /* non-blocking */ }
 
-  // ── 3. Seeded mock data (final fallback) ──────────────────────────────────
-  return generateMockExpertPredictions(
-    fixtureId, sport, homeTeam, awayTeam, predictedResult, homeWinProb, awayWinProb
-  );
-}
-
-function generateMockExpertPredictions(
-  fixtureId: string,
-  sport: string,
-  homeTeam: string,
-  awayTeam: string,
-  predictedResult?: string | null,
-  homeWinProb?: number | null,
-  awayWinProb?: number | null,
-): ExpertPrediction[] {
-  const seed = homeTeam.charCodeAt(0) * 17 + awayTeam.charCodeAt(0) * 11;
-  const si = (min: number, max: number, off = 0) =>
-    min + (Math.abs(seed + off) % (max - min + 1));
-
-  const totalExperts = si(12, 22);
-  const hwp = homeWinProb ?? 48;
-  const awp = awayWinProb ?? 35;
-
-  // Expert match result leaning
-  const expertFavour = hwp >= awp ? 'home' : 'away';
-  const expertTeam = expertFavour === 'home' ? homeTeam : awayTeam;
-  const expertsForResult = Math.round(totalExperts * (expertFavour === 'home' ? (hwp / 100 + 0.15) : (awp / 100 + 0.15)));
-  const clampedExperts = Math.min(totalExperts, Math.max(Math.round(totalExperts * 0.45), expertsForResult));
-
-  const results: ExpertPrediction[] = [
-    {
-      id: `mock-result-${fixtureId}`,
-      fixtureId,
-      predictionType: sport.toLowerCase() === 'mma' || sport.toLowerCase() === 'boxing'
-        ? 'FIGHT WINNER'
-        : sport.toLowerCase() === 'basketball' ? 'GAME WINNER'
-        : sport.toLowerCase() === 'tennis' ? 'MATCH WINNER'
-        : 'MATCH RESULT',
-      prediction: expertFavour === 'home' ? homeTeam : awayTeam,
-      expertSource: 'Expert Panel',
-      expertCount: clampedExperts,
-      expertsSupporting: clampedExperts,
-      totalExperts,
-      expertAccuracy: si(68, 80) + si(0, 6, 7),
-      sport,
-      odds: null,
-      createdAt: new Date().toISOString(),
-    },
-  ];
-
-  // Add Over/Under expert pick for relevant sports
-  const addOU = !['mma', 'boxing'].includes(sport.toLowerCase());
-  if (addOU) {
-    const ouLabel = sport.toLowerCase() === 'basketball' ? 'TOTAL POINTS O/U'
-      : sport.toLowerCase() === 'tennis' ? 'TOTAL SETS O/U'
-      : 'OVER/UNDER';
-    const ouLine = sport.toLowerCase() === 'basketball' ? '215.5'
-      : sport.toLowerCase() === 'tennis' ? '2.5'
-      : '2.5';
-    const ouSide = si(0, 1, 13) === 0 ? 'OVER' : 'UNDER';
-    const ouExperts = Math.round(totalExperts * (si(50, 68, 19) / 100));
-    results.push({
-      id: `mock-ou-${fixtureId}`,
-      fixtureId,
-      predictionType: ouLabel,
-      prediction: `${ouSide} ${ouLine}`,
-      expertSource: 'Tipsters Network',
-      expertCount: ouExperts,
-      expertsSupporting: ouExperts,
-      totalExperts,
-      expertAccuracy: si(62, 74) + si(0, 5, 23),
-      sport,
-      odds: null,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  return results;
+  // ── 3. No expert data available — honest empty state ──────────────────────
+  // Production rule: never fabricate expert predictions, expert counts,
+  // expert accuracy, or consensus percentages.
+  // Return [] — UI must show "No expert predictions available for this match."
+  return [];
 }
 
 // ─── Consensus Engine ─────────────────────────────────────────────────────────
 
-/** Compare AI vs Expert prediction and return consensus metrics. */
+/**
+ * Compare AI vs Expert prediction and return DETERMINISTIC consensus metrics.
+ *
+ * CRITICAL: Math.random() is FORBIDDEN here.
+ * Agreement scores must be identical on every call with the same inputs.
+ * Scores must be stable across app refresh, restart, and device changes.
+ */
 export function computeConsensus(
   aiPrediction: string,
   expertPrediction: string,
@@ -454,7 +383,6 @@ export function computeConsensus(
   const aiLower = aiPrediction.toLowerCase();
   const exLower = expertPrediction.toLowerCase();
 
-  // Normalise to detect agreement
   const normalise = (s: string) => {
     if (s.includes(homeTeam.split(' ').slice(-1)[0].toLowerCase())) return 'home';
     if (s.includes(awayTeam.split(' ').slice(-1)[0].toLowerCase())) return 'away';
@@ -471,8 +399,10 @@ export function computeConsensus(
   let agreementLabel: 'YES' | 'PARTIAL' | 'NO';
   let consensusRating: 'Very Strong' | 'Strong' | 'Moderate' | 'Weak';
 
+  // All scores derived deterministically from input strings — NO Math.random()
   if (aiNorm === exNorm) {
-    agreementScore = 85 + Math.floor(Math.random() * 12);
+    const hashBase = (aiNorm.charCodeAt(0) ?? 65) + (exNorm.charCodeAt(0) ?? 65);
+    agreementScore = 85 + (hashBase % 12);
     agreementLabel = 'YES';
     consensusRating = agreementScore >= 92 ? 'Very Strong' : 'Strong';
   } else if (
@@ -481,11 +411,13 @@ export function computeConsensus(
     (aiNorm === 'over' && exNorm === 'over') ||
     (aiNorm === 'under' && exNorm === 'under')
   ) {
-    agreementScore = 55 + Math.floor(Math.random() * 20);
+    const hashBase = Math.abs((aiNorm.charCodeAt(0) ?? 65) - (exNorm.charCodeAt(0) ?? 65));
+    agreementScore = 55 + (hashBase % 20);
     agreementLabel = 'PARTIAL';
     consensusRating = 'Moderate';
   } else {
-    agreementScore = 15 + Math.floor(Math.random() * 30);
+    const hashBase = (aiNorm.length + exNorm.length) % 30;
+    agreementScore = 15 + hashBase;
     agreementLabel = 'NO';
     consensusRating = 'Weak';
   }

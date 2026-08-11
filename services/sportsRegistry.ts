@@ -1,12 +1,33 @@
 /**
- * services/sportsRegistry.ts — PredictXta Unified Sports Registry
+ * services/sportsRegistry.ts — PredictXta Canonical Sports Registry v2.0
  *
- * Central source of truth for all supported sports.
- * Every screen is driven from this registry — no hardcoded sport lists anywhere.
+ * ═══════════════════════════════════════════════════════════════════════
+ * THIS IS THE SINGLE SOURCE OF TRUTH FOR ALL SPORTS IN PREDICTXTA.
+ * No other file may define a list of supported sports.
+ * All consumers MUST import from this registry.
+ * ═══════════════════════════════════════════════════════════════════════
  *
- * Covers all API-Sports sub-domains + TheSportsDB + Highlightly sports.
+ * Exactly 13 supported sports:
+ *   1. football          (API-Football primary)
+ *   2. basketball        (API-Sports)
+ *   3. tennis            (TheSportsDB — free tier)
+ *   4. cricket           (TheSportsDB — free tier)
+ *   5. baseball          (API-Sports)
+ *   6. ice-hockey        (API-Sports)   [DB key: 'hockey']
+ *   7. rugby             (API-Sports)
+ *   8. american-football (API-Sports)
+ *   9. mma               (API-Sports)
+ *  10. boxing            (TheSportsDB)
+ *  11. volleyball        (API-Sports)
+ *  12. handball          (API-Sports)
+ *  13. esports           (TheSportsDB)
+ *
+ * REMOVED (no reliable live fixture / standings / odds API):
+ *   Formula 1, AFL, Badminton, Table Tennis, Snooker, Darts,
+ *   Cycling, Athletics, Motorsports, Squash
  */
 
+// ─── Sport family type ────────────────────────────────────────────────────────
 export type SportFamily =
   | 'football'
   | 'basketball'
@@ -19,9 +40,26 @@ export type SportFamily =
   | 'american_football'
   | 'cricket'
   | 'mma'
-  | 'formula1'
-  | 'afl';
+  | 'boxing'
+  | 'esports';
 
+// ─── Provider capability type ─────────────────────────────────────────────────
+export type ProviderType = 'api-sports' | 'thesportsdb' | 'api-football';
+
+export interface ProviderCapability {
+  provider: ProviderType;
+  priority: 1 | 2 | 3;
+  supportsFixtures: boolean;
+  supportsLive: boolean;
+  supportsStandings: boolean;
+  supportsStatistics: boolean;
+  supportsOdds: boolean;
+  supportsLineups: boolean;
+  apiSportsBase?: string;
+  tsdbSlug?: string;
+}
+
+// ─── Sport definition ─────────────────────────────────────────────────────────
 export interface SportDefinition {
   /** Internal DB key — matches `matches.sport` column */
   key: string;
@@ -33,285 +71,530 @@ export interface SportDefinition {
   emoji: string;
   /** Accent color (hex) */
   accentColor: string;
-  /** API-Sports sub-domain key or 'thesportsdb' / 'thesportsdb' */
-  primaryProvider: 'api-sports' | 'thesportsdb' | 'thesportsdb';
+  /** Provider capabilities in priority order */
+  providers: ProviderCapability[];
   /** Whether 1X2 draw market exists */
   hasDraw: boolean;
-  /** Whether BTTS market applies */
+  /** Whether BTTS market applies (football/handball only) */
   hasBtts: boolean;
   /** Scoring unit label */
   scoringUnit: string;
-  /** Whether standings are available */
+  /** Whether standings table is available */
   hasStandings: boolean;
-  /** Whether lineups are relevant */
+  /** Whether player lineups are relevant */
   hasLineups: boolean;
   /** Whether head-to-head history is tracked */
   hasH2H: boolean;
+  /** Whether timeline/events feed is available */
+  hasTimeline: boolean;
   /** Typical live update interval in seconds */
   liveUpdateIntervalSec: number;
-  /** Display order in navigation rail */
+  /** Display order in navigation rail (1 = first) */
   displayOrder: number;
-  /** Whether this sport is actively supported */
+  /** Whether this sport is actively supported in production */
   active: boolean;
-  /** TheSportsDB slug for fallback */
-  tsdbSlug?: string;
-  /** API-Sports base URL */
-  apiSportsBase?: string;
 }
 
+// ─── Canonical Registry ───────────────────────────────────────────────────────
 export const SPORTS_REGISTRY: SportDefinition[] = [
+  // ── 1. Football ────────────────────────────────────────────────────────────
   {
     key: 'football',
     family: 'football',
     displayName: 'Football',
     emoji: '⚽',
     accentColor: '#6EDC1F',
-    primaryProvider: 'api-sports',
+    providers: [
+      {
+        provider: 'api-football',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: true,
+        supportsStatistics: true,
+        supportsOdds: true,
+        supportsLineups: true,
+        apiSportsBase: 'https://v3.football.api-sports.io',
+        tsdbSlug: 'Soccer',
+      },
+    ],
     hasDraw: true,
     hasBtts: true,
     scoringUnit: 'Goals',
     hasStandings: true,
     hasLineups: true,
     hasH2H: true,
+    hasTimeline: true,
     liveUpdateIntervalSec: 30,
     displayOrder: 1,
     active: true,
-    tsdbSlug: 'Soccer',
-    apiSportsBase: 'https://v3.football.api-sports.io',
   },
+
+  // ── 2. Basketball ──────────────────────────────────────────────────────────
   {
     key: 'basketball',
     family: 'basketball',
     displayName: 'Basketball',
     emoji: '🏀',
     accentColor: '#F97316',
-    primaryProvider: 'api-sports',
+    providers: [
+      {
+        provider: 'api-sports',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: true,
+        supportsStatistics: true,
+        supportsOdds: false,
+        supportsLineups: true,
+        apiSportsBase: 'https://v1.basketball.api-sports.io',
+        tsdbSlug: 'Basketball',
+      },
+      {
+        provider: 'thesportsdb',
+        priority: 2,
+        supportsFixtures: true,
+        supportsLive: false,
+        supportsStandings: false,
+        supportsStatistics: false,
+        supportsOdds: false,
+        supportsLineups: false,
+        tsdbSlug: 'Basketball',
+      },
+    ],
     hasDraw: false,
     hasBtts: false,
     scoringUnit: 'Points',
     hasStandings: true,
     hasLineups: true,
     hasH2H: true,
+    hasTimeline: false,
     liveUpdateIntervalSec: 15,
     displayOrder: 2,
     active: true,
-    tsdbSlug: 'Basketball',
-    apiSportsBase: 'https://v1.basketball.api-sports.io',
   },
+
+  // ── 3. Tennis ──────────────────────────────────────────────────────────────
   {
     key: 'tennis',
     family: 'tennis',
     displayName: 'Tennis',
     emoji: '🎾',
     accentColor: '#FBBF24',
-    primaryProvider: 'thesportsdb',  // Uses TSDB free tier — 0 API-Sports quota
+    providers: [
+      {
+        provider: 'thesportsdb',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: false,
+        supportsStandings: false,
+        supportsStatistics: false,
+        supportsOdds: false,
+        supportsLineups: true,
+        tsdbSlug: 'Tennis',
+      },
+    ],
     hasDraw: false,
     hasBtts: false,
     scoringUnit: 'Sets',
     hasStandings: false,
     hasLineups: true,
     hasH2H: true,
-    liveUpdateIntervalSec: 10,
+    hasTimeline: false,
+    liveUpdateIntervalSec: 30,
     displayOrder: 3,
     active: true,
-    tsdbSlug: 'Tennis',
-    apiSportsBase: 'https://v1.tennis.api-sports.io',
   },
+
+  // ── 4. Cricket ─────────────────────────────────────────────────────────────
   {
     key: 'cricket',
     family: 'cricket',
     displayName: 'Cricket',
     emoji: '🏏',
     accentColor: '#A78BFA',
-    primaryProvider: 'thesportsdb',
+    providers: [
+      {
+        provider: 'thesportsdb',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: false,
+        supportsStandings: true,
+        supportsStatistics: false,
+        supportsOdds: false,
+        supportsLineups: true,
+        tsdbSlug: 'Cricket',
+      },
+    ],
     hasDraw: true,
     hasBtts: false,
     scoringUnit: 'Runs',
     hasStandings: true,
     hasLineups: true,
     hasH2H: true,
-    liveUpdateIntervalSec: 15,
+    hasTimeline: false,
+    liveUpdateIntervalSec: 30,
     displayOrder: 4,
     active: true,
-    tsdbSlug: 'Cricket',
   },
+
+  // ── 5. Baseball ────────────────────────────────────────────────────────────
   {
     key: 'baseball',
     family: 'baseball',
     displayName: 'Baseball',
     emoji: '⚾',
     accentColor: '#C084FC',
-    primaryProvider: 'api-sports',
+    providers: [
+      {
+        provider: 'api-sports',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: true,
+        supportsStatistics: true,
+        supportsOdds: false,
+        supportsLineups: true,
+        apiSportsBase: 'https://v1.baseball.api-sports.io',
+        tsdbSlug: 'Baseball',
+      },
+    ],
     hasDraw: false,
     hasBtts: false,
     scoringUnit: 'Runs',
     hasStandings: true,
     hasLineups: true,
     hasH2H: true,
+    hasTimeline: false,
     liveUpdateIntervalSec: 30,
     displayOrder: 5,
     active: true,
-    tsdbSlug: 'Baseball',
-    apiSportsBase: 'https://v1.baseball.api-sports.io',
   },
+
+  // ── 6. Ice Hockey ──────────────────────────────────────────────────────────
   {
     key: 'hockey',
     family: 'hockey',
     displayName: 'Ice Hockey',
     emoji: '🏒',
     accentColor: '#38BDF8',
-    primaryProvider: 'api-sports',
+    providers: [
+      {
+        provider: 'api-sports',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: true,
+        supportsStatistics: true,
+        supportsOdds: false,
+        supportsLineups: true,
+        apiSportsBase: 'https://v1.hockey.api-sports.io',
+        tsdbSlug: 'Ice+Hockey',
+      },
+    ],
     hasDraw: false,
     hasBtts: false,
     scoringUnit: 'Goals',
     hasStandings: true,
     hasLineups: true,
     hasH2H: true,
+    hasTimeline: false,
     liveUpdateIntervalSec: 20,
     displayOrder: 6,
     active: true,
-    tsdbSlug: 'Ice+Hockey',
-    apiSportsBase: 'https://v1.hockey.api-sports.io',
   },
+
+  // ── 7. Rugby ───────────────────────────────────────────────────────────────
   {
     key: 'rugby',
     family: 'rugby',
     displayName: 'Rugby',
     emoji: '🏉',
     accentColor: '#34D399',
-    primaryProvider: 'api-sports',
+    providers: [
+      {
+        provider: 'api-sports',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: true,
+        supportsStatistics: false,
+        supportsOdds: false,
+        supportsLineups: true,
+        apiSportsBase: 'https://v1.rugby.api-sports.io',
+        tsdbSlug: 'Rugby',
+      },
+    ],
     hasDraw: true,
     hasBtts: false,
     scoringUnit: 'Points',
     hasStandings: true,
     hasLineups: true,
     hasH2H: true,
+    hasTimeline: false,
     liveUpdateIntervalSec: 30,
     displayOrder: 7,
     active: true,
-    tsdbSlug: 'Rugby',
-    apiSportsBase: 'https://v1.rugby.api-sports.io',
   },
-  {
-    key: 'mma',
-    family: 'mma',
-    displayName: 'MMA / UFC',
-    emoji: '🥊',
-    accentColor: '#F43F5E',
-    primaryProvider: 'api-sports',
-    hasDraw: false,
-    hasBtts: false,
-    scoringUnit: 'Rounds',
-    hasStandings: false,
-    hasLineups: true,
-    hasH2H: true,
-    liveUpdateIntervalSec: 20,
-    displayOrder: 8,
-    active: true,
-    tsdbSlug: 'Mixed+Martial+Arts',
-    apiSportsBase: 'https://v1.mma.api-sports.io',
-  },
+
+  // ── 8. American Football ───────────────────────────────────────────────────
   {
     key: 'american-football',
     family: 'american_football',
     displayName: 'American Football',
     emoji: '🏈',
     accentColor: '#F87171',
-    primaryProvider: 'api-sports',
+    providers: [
+      {
+        provider: 'api-sports',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: true,
+        supportsStatistics: true,
+        supportsOdds: false,
+        supportsLineups: true,
+        apiSportsBase: 'https://v1.american-football.api-sports.io',
+        tsdbSlug: 'American+Football',
+      },
+    ],
     hasDraw: false,
     hasBtts: false,
     scoringUnit: 'Points',
     hasStandings: true,
     hasLineups: true,
     hasH2H: true,
+    hasTimeline: false,
     liveUpdateIntervalSec: 30,
+    displayOrder: 8,
+    active: true,
+  },
+
+  // ── 9. MMA / UFC ───────────────────────────────────────────────────────────
+  {
+    key: 'mma',
+    family: 'mma',
+    displayName: 'MMA / UFC',
+    emoji: '🥊',
+    accentColor: '#F43F5E',
+    providers: [
+      {
+        provider: 'api-sports',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: false,
+        supportsStatistics: true,
+        supportsOdds: false,
+        supportsLineups: true,
+        apiSportsBase: 'https://v1.mma.api-sports.io',
+        tsdbSlug: 'Mixed+Martial+Arts',
+      },
+    ],
+    hasDraw: false,
+    hasBtts: false,
+    scoringUnit: 'Rounds',
+    hasStandings: false,
+    hasLineups: true,
+    hasH2H: true,
+    hasTimeline: false,
+    liveUpdateIntervalSec: 20,
     displayOrder: 9,
     active: true,
-    tsdbSlug: 'American+Football',
-    apiSportsBase: 'https://v1.american-football.api-sports.io',
   },
+
+  // ── 10. Boxing ─────────────────────────────────────────────────────────────
   {
-    key: 'handball',
-    family: 'handball',
-    displayName: 'Handball',
-    emoji: '🤾',
-    accentColor: '#FB923C',
-    primaryProvider: 'api-sports',
-    hasDraw: true,
-    hasBtts: true,
-    scoringUnit: 'Goals',
-    hasStandings: true,
-    hasLineups: false,
+    key: 'boxing',
+    family: 'boxing',
+    displayName: 'Boxing',
+    emoji: '🥊',
+    accentColor: '#EF4444',
+    providers: [
+      {
+        provider: 'thesportsdb',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: false,
+        supportsStandings: false,
+        supportsStatistics: false,
+        supportsOdds: false,
+        supportsLineups: true,
+        tsdbSlug: 'Boxing',
+      },
+    ],
+    hasDraw: true, // Technical draw possible in boxing
+    hasBtts: false,
+    scoringUnit: 'Rounds',
+    hasStandings: false,
+    hasLineups: true,
     hasH2H: true,
-    liveUpdateIntervalSec: 20,
+    hasTimeline: false,
+    liveUpdateIntervalSec: 30,
     displayOrder: 10,
     active: true,
-    tsdbSlug: 'Handball',
-    apiSportsBase: 'https://v1.handball.api-sports.io',
   },
+
+  // ── 11. Volleyball ─────────────────────────────────────────────────────────
   {
     key: 'volleyball',
     family: 'volleyball',
     displayName: 'Volleyball',
     emoji: '🏐',
     accentColor: '#60A5FA',
-    primaryProvider: 'api-sports',
+    providers: [
+      {
+        provider: 'api-sports',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: true,
+        supportsStatistics: false,
+        supportsOdds: false,
+        supportsLineups: false,
+        apiSportsBase: 'https://v1.volleyball.api-sports.io',
+        tsdbSlug: 'Volleyball',
+      },
+    ],
     hasDraw: false,
     hasBtts: false,
     scoringUnit: 'Sets',
     hasStandings: true,
     hasLineups: false,
     hasH2H: true,
+    hasTimeline: false,
     liveUpdateIntervalSec: 15,
     displayOrder: 11,
     active: true,
-    tsdbSlug: 'Volleyball',
-    apiSportsBase: 'https://v1.volleyball.api-sports.io',
   },
+
+  // ── 12. Handball ───────────────────────────────────────────────────────────
   {
-    key: 'formula1',
-    family: 'formula1',
-    displayName: 'Formula 1',
-    emoji: '🏎️',
-    accentColor: '#E11D48',
-    primaryProvider: 'thesportsdb',
-    hasDraw: false,
-    hasBtts: false,
-    scoringUnit: 'Pos',
-    hasStandings: true,
-    hasLineups: false,
-    hasH2H: false,
-    liveUpdateIntervalSec: 30,
-    displayOrder: 13,
-    active: true,
-    tsdbSlug: 'Motorsport',
-  },
-  {
-    key: 'afl',
-    family: 'afl',
-    displayName: 'AFL',
-    emoji: '🏉',
-    accentColor: '#00B140',
-    primaryProvider: 'api-sports',
-    hasDraw: false,
-    hasBtts: false,
-    scoringUnit: 'Points',
+    key: 'handball',
+    family: 'handball',
+    displayName: 'Handball',
+    emoji: '🤾',
+    accentColor: '#FB923C',
+    providers: [
+      {
+        provider: 'api-sports',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: true,
+        supportsStandings: true,
+        supportsStatistics: false,
+        supportsOdds: false,
+        supportsLineups: false,
+        apiSportsBase: 'https://v1.handball.api-sports.io',
+        tsdbSlug: 'Handball',
+      },
+    ],
+    hasDraw: true,
+    hasBtts: true,
+    scoringUnit: 'Goals',
     hasStandings: true,
     hasLineups: false,
     hasH2H: true,
-    liveUpdateIntervalSec: 30,
-    displayOrder: 22,
+    hasTimeline: false,
+    liveUpdateIntervalSec: 20,
+    displayOrder: 12,
     active: true,
-    tsdbSlug: 'Australian+Football',
-    apiSportsBase: 'https://v1.afl.api-sports.io',
+  },
+
+  // ── 13. Esports ────────────────────────────────────────────────────────────
+  {
+    key: 'esports',
+    family: 'esports',
+    displayName: 'Esports',
+    emoji: '🎮',
+    accentColor: '#8B5CF6',
+    providers: [
+      {
+        provider: 'thesportsdb',
+        priority: 1,
+        supportsFixtures: true,
+        supportsLive: false,
+        supportsStandings: false,
+        supportsStatistics: false,
+        supportsOdds: false,
+        supportsLineups: false,
+        tsdbSlug: 'eSports',
+      },
+    ],
+    hasDraw: false,
+    hasBtts: false,
+    scoringUnit: 'Maps',
+    hasStandings: false,
+    hasLineups: false,
+    hasH2H: true,
+    hasTimeline: false,
+    liveUpdateIntervalSec: 30,
+    displayOrder: 13,
+    active: true,
   },
 ];
+
+// ─── Validation (called at startup / build time) ──────────────────────────────
+
+/**
+ * assertSupportedSportRegistry() — validates the canonical registry.
+ * Throws if: count != 13, duplicates found, or missing required fields.
+ * Called in development/test environments to catch regressions.
+ */
+export function assertSupportedSportRegistry(): void {
+  const EXPECTED_KEYS = new Set([
+    'football', 'basketball', 'tennis', 'cricket', 'baseball',
+    'hockey', 'rugby', 'american-football', 'mma', 'boxing',
+    'volleyball', 'handball', 'esports',
+  ]);
+
+  const REMOVED_SPORTS = [
+    'formula1', 'formula-1', 'afl', 'australian-football',
+    'badminton', 'table-tennis', 'snooker', 'darts',
+    'cycling', 'athletics', 'motorsports', 'squash',
+  ];
+
+  const active = SPORTS_REGISTRY.filter(s => s.active);
+
+  if (active.length !== 13) {
+    throw new Error(
+      `[SportsRegistry] Expected exactly 13 active sports, found ${active.length}.`
+    );
+  }
+
+  const keys = new Set(active.map(s => s.key));
+  for (const expected of EXPECTED_KEYS) {
+    if (!keys.has(expected)) {
+      throw new Error(`[SportsRegistry] Missing required sport: ${expected}`);
+    }
+  }
+
+  for (const removed of REMOVED_SPORTS) {
+    if (keys.has(removed)) {
+      throw new Error(
+        `[SportsRegistry] Removed sport "${removed}" must not appear in active registry.`
+      );
+    }
+  }
+
+  // Check for duplicate keys
+  const seen = new Set<string>();
+  for (const s of SPORTS_REGISTRY) {
+    if (seen.has(s.key)) {
+      throw new Error(`[SportsRegistry] Duplicate sport key: ${s.key}`);
+    }
+    seen.add(s.key);
+  }
+}
 
 // ─── Lookup helpers ────────────────────────────────────────────────────────────
 
 /** Get sport definition by DB key */
 export function getSportDef(key: string): SportDefinition | undefined {
-  return SPORTS_REGISTRY.find((s) => s.key === key.toLowerCase().replace(/\s+/g, '-'));
+  const normalized = key.toLowerCase().replace(/\s+/g, '-');
+  return SPORTS_REGISTRY.find(
+    (s) => s.key === normalized || s.key === key.toLowerCase()
+  );
 }
 
 /** Get active sports sorted by displayOrder */
@@ -341,7 +624,7 @@ export function getSportUpdateInterval(key: string): number {
 
 /** Check if sport supports draw market */
 export function sportHasDraw(key: string): boolean {
-  return getSportDef(key)?.hasDraw ?? true;
+  return getSportDef(key)?.hasDraw ?? false;
 }
 
 /** Check if sport supports BTTS market */
@@ -360,21 +643,23 @@ export function isFightSport(key: string): boolean {
   return family === 'mma' || family === 'boxing';
 }
 
-/** Check if sport is racket-based (Tennis, Table Tennis, Badminton, Squash) */
+/** Check if sport is a racket sport */
 export function isRacketSport(key: string): boolean {
   const family = getSportDef(key)?.family;
-  return family === 'tennis' || family === 'table_tennis' || family === 'badminton';
+  return family === 'tennis';
 }
 
-/** Check if sport is motorsport */
-export function isMotorSport(key: string): boolean {
-  const family = getSportDef(key)?.family;
-  return family === 'formula1' || family === 'motorsports' || family === 'cycling';
-}
-
-/** Get all sport keys as string array */
+/** Get all active sport keys as string array */
 export function getAllSportKeys(): string[] {
   return SPORTS_REGISTRY.filter((s) => s.active).map((s) => s.key);
+}
+
+/** Check if a sport key is in the active supported list */
+export function isSupportedSport(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/\s+/g, '-');
+  return SPORTS_REGISTRY.some(
+    (s) => s.active && (s.key === normalized || s.key === key.toLowerCase())
+  );
 }
 
 /** Build the predictions rail chips for a given sport */
@@ -389,25 +674,50 @@ export function getPredictionFiltersForSport(sportKey: string): PredFilterChip[]
   const def = getSportDef(sportKey);
   const base: PredFilterChip[] = [
     { id: 'All', label: 'All', icon: 'apps-outline', color: '#F59E0B' },
-    { id: 'home_win', label: isFightSport(sportKey) ? 'Fighter 1' : 'Home Win', icon: 'home-outline', color: '#6366F1' },
-    { id: 'away_win', label: isFightSport(sportKey) ? 'Fighter 2' : 'Away Win', icon: 'airplane-outline', color: '#EC4899' },
+    {
+      id: 'home_win',
+      label: isFightSport(sportKey) ? 'Fighter 1' : 'Home Win',
+      icon: 'home-outline',
+      color: '#6366F1',
+    },
+    {
+      id: 'away_win',
+      label: isFightSport(sportKey) ? 'Fighter 2' : 'Away Win',
+      icon: 'airplane-outline',
+      color: '#EC4899',
+    },
   ];
-  if (def?.hasDraw) base.splice(2, 0, { id: 'draw', label: 'Draw', icon: 'remove-outline', color: '#818CF8' });
-  if (!isFightSport(sportKey) && !isMotorSport(sportKey)) {
-    base.push({ id: 'over', label: `Over ${def?.scoringUnit ?? ''}`.trim(), icon: 'trending-up-outline', color: '#22C55E' });
-    base.push({ id: 'under', label: `Under ${def?.scoringUnit ?? ''}`.trim(), icon: 'trending-down-outline', color: '#EF4444' });
+
+  if (def?.hasDraw) {
+    base.splice(2, 0, { id: 'draw', label: 'Draw', icon: 'remove-outline', color: '#818CF8' });
   }
+
+  if (!isFightSport(sportKey)) {
+    base.push({
+      id: 'over',
+      label: `Over ${def?.scoringUnit ?? ''}`.trim(),
+      icon: 'trending-up-outline',
+      color: '#22C55E',
+    });
+    base.push({
+      id: 'under',
+      label: `Under ${def?.scoringUnit ?? ''}`.trim(),
+      icon: 'trending-down-outline',
+      color: '#EF4444',
+    });
+  }
+
   if (def?.hasBtts) {
     base.push({ id: 'btts_yes', label: 'BTTS Yes', icon: 'swap-horizontal-outline', color: '#14B8A6' });
     base.push({ id: 'btts_no', label: 'BTTS No', icon: 'close-circle-outline', color: '#F97316' });
   }
+
   base.push({ id: 'high_conf', label: 'High Conf', icon: 'shield-checkmark-outline', color: '#A855F7' });
   return base;
 }
 
 /**
  * Get the result chip label appropriate for this sport.
- * e.g., "Home Win" for football, "Fighter 1 Win" for MMA.
  */
 export function getResultLabel(
   sportKey: string,
@@ -420,6 +730,15 @@ export function getResultLabel(
   if (result === 'away_win') return fight ? `${awayTeam.split(' ').slice(-1)[0]} Wins` : 'Away Win';
   if (result === 'draw') return fight ? 'Draw / NC' : 'Draw';
   return result;
+}
+
+/**
+ * Returns the primary provider for a sport's fixture data.
+ */
+export function getPrimaryProvider(key: string): ProviderCapability | undefined {
+  const def = getSportDef(key);
+  if (!def) return undefined;
+  return def.providers.sort((a, b) => a.priority - b.priority)[0];
 }
 
 export default SPORTS_REGISTRY;

@@ -1,0 +1,11 @@
+.git
+.github
+.expo
+node_modules
+android
+ios
+.vscode
+.env
+dist
+.next
+*.log

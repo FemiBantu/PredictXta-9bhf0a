@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PrivacyInfo.xcprivacy — Apple Privacy Manifest
+  Required for App Store review since spring 2024.
+
+  Covers:
+    NSPrivacyCollectedDataTypes   — what data PredictXta collects
+    NSPrivacyAccessedAPITypes     — which "required-reason" APIs are used
+    NSPrivacyTracking             — whether cross-site/cross-app tracking occurs
+    NSPrivacyTrackingDomains      — domains used for tracking (none)
+
+  Apple documentation:
+    https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
+    https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_data_use_in_privacy_manifests
+    https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api
+-->
+<plist version="1.0">
+<dict>
+
+  <!-- ── Tracking ──────────────────────────────────────────────────────── -->
+  <!--
+    PredictXta does NOT track users across apps or websites owned by other
+    companies for advertising or data-broker purposes.
+  -->
+  <key>NSPrivacyTracking</key>
+  <false/>
+
+  <!-- No tracking domains -->
+  <key>NSPrivacyTrackingDomains</key>
+  <array/>
+
+  <!-- ── Collected Data Types ───────────────────────────────────────────── -->
+  <key>NSPrivacyCollectedDataTypes</key>
+  <array>
+
+    <!-- 1. Email Address -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeEmailAddress</string>
+      <!-- Linked to the user's identity -->
+      <key>NSPrivacyCollectedDataTypeLinked</key>
+      <true/>
+      <!-- Not used for tracking -->
+      <key>NSPrivacyCollectedDataTypeTracking</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <!-- Account authentication (login / registration) -->
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+      </array>
+    </dict>
+
+    <!-- 2. User ID -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeUserID</string>
+      <!-- Linked to identity (Supabase auth UUID) -->
+      <key>NSPrivacyCollectedDataTypeLinked</key>
+      <true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <!-- Needed to associate predictions, coins, and chat with the account -->
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+      </array>
+    </dict>
+
+    <!-- 3. Device ID -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeDeviceID</string>
+      <!-- Not directly linked to identity, used for push token management -->
+      <key>NSPrivacyCollectedDataTypeLinked</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypeTracking</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <!-- Required to register and route push notification tokens (FCM / APNs) -->
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+      </array>
+    </dict>
+
+    <!-- 4. Profile Photo / Avatar (user-provided) -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePhotosorVideos</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key>
+      <true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <!-- User explicitly uploads a profile photo -->
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+      </array>
+    </dict>
+
+    <!-- 5. User-generated content (chat messages, predictions) -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key>
+      <true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <!-- Community chat, AI picks, challenge picks -->
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+      </array>
+    </dict>
+
+    <!-- 6. Coarse location (country code derived from IP, not GPS) -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeCoarseLocation</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypeTracking</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <!-- Language/region defaults and league relevance sorting -->
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+      </array>
+    </dict>
+
+    <!-- 7. Purchase history (VIP subscription via IAP) -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePurchaseHistory</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key>
+      <true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key>
+      <false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <!-- Verifying and restoring VIP subscription entitlement -->
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+      </array>
+    </dict>
+
+  </array>
+
+  <!-- ── Required Reason APIs ───────────────────────────────────────────── -->
+  <key>NSPrivacyAccessedAPITypes</key>
+  <array>
+
+    <!--
+      NSUserDefaults — used to persist user preferences, theme, language,
+      onboarding state, cookie consent, and push permission status via
+      AsyncStorage (which maps to NSUserDefaults on iOS).
+      Approved reason: CA92.1 — "Access info from the same app"
+    -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>CA92.1</string>
+      </array>
+    </dict>
+
+    <!--
+      File timestamp APIs — used internally by the Expo / React Native runtime
+      and SQLite (AsyncStorage backing store) to manage cached data and file
+      modification times.
+      Approved reason: C617.1 — "Accessing the timestamps of files inside the app container"
+    -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>C617.1</string>
+      </array>
+    </dict>
+
+    <!--
+      System boot time — accessed by Expo runtime and networking libraries to
+      calculate elapsed time and connection timeouts.
+      Approved reason: 35F9.1 — "Accessing boot time to measure elapsed time"
+    -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>35F9.1</string>
+      </array>
+    </dict>
+
+    <!--
+      Disk space — accessed by Expo FileSystem and AsyncStorage to check
+      available storage before cache writes.
+      Approved reason: E174.1 — "Providing app features requested by user"
+    -->
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>E174.1</string>
+      </array>
+    </dict>
+
+  </array>
+
+</dict>
+</plist>

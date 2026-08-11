@@ -1,0 +1,69 @@
+# ── Cloud Build pipeline — PredictXta ─────────────────────────────────────────
+#
+# Substitution variables (configure in Cloud Build trigger UI or --substitutions flag):
+#
+#   _EXPO_PUBLIC_SUPABASE_URL      — OnSpace/Supabase backend URL
+#                                    e.g. https://osmkbrryalhtpnayosmk.backend.onspace.ai
+#   _EXPO_PUBLIC_SUPABASE_ANON_KEY — OnSpace/Supabase public anon key
+#                                    (find in: OnSpace Cloud → Secrets, or Supabase Project Settings → API)
+#
+# These are PUBLIC client-side keys (EXPO_PUBLIC_ prefix); safe to store as
+# Cloud Build trigger substitution variables (no Secret Manager required).
+#
+# To set them permanently on a trigger:
+#   gcloud beta builds triggers update <TRIGGER_ID> \
+#     --substitutions _EXPO_PUBLIC_SUPABASE_URL=https://...,_EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+# ──────────────────────────────────────────────────────────────────────────────
+
+substitutions:
+  _REGION: 'europe-west1'
+  _SERVICE: 'predictxta'
+  _IMAGE: 'europe-west1-docker.pkg.dev/$PROJECT_ID/predictxta/predictxta'
+  _EXPO_PUBLIC_SUPABASE_URL: ''      # Set in trigger substitutions
+  _EXPO_PUBLIC_SUPABASE_ANON_KEY: '' # Set in trigger substitutions
+
+steps:
+  # ── Step 1: Build Docker image ───────────────────────────────────────────────
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build'
+    args:
+      - build
+      - '-t'
+      - '${_IMAGE}:$COMMIT_SHA'
+      - '-t'
+      - '${_IMAGE}:latest'
+      - '--build-arg'
+      - 'EXPO_PUBLIC_SUPABASE_URL=${_EXPO_PUBLIC_SUPABASE_URL}'
+      - '--build-arg'
+      - 'EXPO_PUBLIC_SUPABASE_ANON_KEY=${_EXPO_PUBLIC_SUPABASE_ANON_KEY}'
+      - '--cache-from'
+      - '${_IMAGE}:latest'
+      - '.'
+
+  # ── Step 2: Deploy to Cloud Run ──────────────────────────────────────────────
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'deploy'
+    args:
+      - run
+      - deploy
+      - '${_SERVICE}'
+      - '--image=${_IMAGE}:$COMMIT_SHA'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=PORT=8080,NODE_ENV=production'
+      - '--port=8080'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--min-instances=0'
+      - '--max-instances=10'
+      - '--concurrency=80'
+      - '--timeout=60'
+
+images:
+  - '${_IMAGE}:$COMMIT_SHA'
+  - '${_IMAGE}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
