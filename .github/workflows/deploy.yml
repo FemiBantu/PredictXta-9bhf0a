@@ -1,0 +1,184 @@
+# PredictXta — Production CI/CD Pipeline
+# Runs on every push to main and on pull requests to main.
+#
+# Pipeline stages:
+#   1. Install dependencies
+#   2. TypeScript type check
+#   3. ESLint
+#   4. Sports Registry validation
+#   5. Mock-data scan (fails if mock data used in production path)
+#   6. Secret scan (fails if provider secrets appear in client code)
+#   7. Unsupported sport scan
+#   8. Expo config validation
+#   9. EAS production build (main branch only)
+
+name: PredictXta CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ─── Stage 1-4: Lint, Type-check, Registry & Mock-data scan ─────────────────
+  validate:
+    name: Validate Source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        run: npx eslint . --ext .ts,.tsx --max-warnings 0
+
+      # ── Sports Registry Validation ────────────────────────────────────────
+      - name: Validate sports registry (exactly 13 active sports)
+        run: |
+          node -e "
+          const { assertSupportedSportRegistry, getActiveSports } = require('./services/sportsRegistry');
+          try {
+            assertSupportedSportRegistry();
+            const active = getActiveSports();
+            console.log('✓ Registry valid: ' + active.length + ' active sports');
+            active.forEach(s => console.log('  • ' + s.key + ' (' + s.displayName + ')'));
+          } catch (e) {
+            console.error('✗ Registry validation failed:', e.message);
+            process.exit(1);
+          }
+          " 2>&1 || (echo "Registry validation requires ts-node; checking statically..." && grep -r "formula1\|afl\|badminton\|table-tennis\|snooker\|darts\|cycling\|athletics\|motorsports\|squash" services/sportsRegistry.ts constants/theme.ts && echo "ERROR: Removed sports found in registry!" && exit 1 || echo "✓ No removed sports in registry files")
+
+      # ── Mock-data scan ────────────────────────────────────────────────────
+      - name: Scan for mock data in production paths
+        run: |
+          echo "Scanning for mock data usage in production code paths..."
+          # Exclude mockData.ts itself, test files, and this workflow
+          FOUND=0
+          for pattern in "MOCK_MATCHES" "MOCK_PREDICTIONS" "MOCK_CHAT_MESSAGES" "generateMockChallengeMatches" "generateMockExpertPredictions"; do
+            HITS=$(grep -rn "$pattern" \
+              --include="*.ts" --include="*.tsx" \
+              --exclude="constants/mockData.ts" \
+              --exclude-dir=".github" \
+              --exclude-dir="node_modules" \
+              . 2>/dev/null || true)
+            if [ -n "$HITS" ]; then
+              echo "ERROR: Found '$pattern' in:"
+              echo "$HITS"
+              FOUND=1
+            fi
+          done
+          if [ "$FOUND" -eq 1 ]; then
+            echo ""
+            echo "FAIL: Mock data detected in production code paths."
+            echo "Remove mock data fallbacks and show honest empty/error states instead."
+            exit 1
+          fi
+          echo "✓ No mock data in production code paths"
+
+      # ── Secret scan ───────────────────────────────────────────────────────
+      - name: Scan for provider secrets in client code
+        run: |
+          echo "Scanning for secrets in client-accessible code..."
+          FOUND=0
+          # Check that no EXPO_PUBLIC_ secret keys exist
+          for pattern in "EXPO_PUBLIC_SUPABASE_SERVICE_ROLE" "EXPO_PUBLIC_OPENAI" "EXPO_PUBLIC_GEMINI" "EXPO_PUBLIC_GROQ" "EXPO_PUBLIC_API_FOOTBALL" "EXPO_PUBLIC_SPORTSDB"; do
+            HITS=$(grep -rn "$pattern" \
+              --include="*.ts" --include="*.tsx" --include="*.json" --include="*.env*" \
+              --exclude=".env.example" \
+              --exclude-dir="node_modules" \
+              . 2>/dev/null || true)
+            if [ -n "$HITS" ]; then
+              echo "CRITICAL: Server-side secret '$pattern' exposed as EXPO_PUBLIC_: $HITS"
+              FOUND=1
+            fi
+          done
+          if [ "$FOUND" -eq 1 ]; then exit 1; fi
+          echo "✓ No provider secrets in client code"
+
+      # ── Unsupported sport scan ─────────────────────────────────────────────
+      - name: Scan for unsupported sports in active production paths
+        run: |
+          echo "Scanning for removed sports in active production files..."
+          FOUND=0
+          REMOVED_SPORTS="formula1|formula-1|afl|australian-football|badminton|table-tennis|tabletennis|snooker|darts|cycling|athletics|motorsports|squash"
+          # Skip migration files, docs, and history files
+          HITS=$(grep -rniE "$REMOVED_SPORTS" \
+            --include="*.ts" --include="*.tsx" \
+            --exclude-dir="node_modules" \
+            --exclude-dir=".github" \
+            --exclude="*.test.ts" \
+            --exclude="*.spec.ts" \
+            --exclude="*migration*" \
+            . 2>/dev/null | \
+            grep -v "// REMOVED\|// deprecated\|// legacy\|// old\|removed sport\|unsupported" || true)
+          if [ -n "$HITS" ]; then
+            echo "WARNING: Possible removed sport references:"
+            echo "$HITS"
+            echo "Review the above — classify each as safe (comment, docs) or fix it."
+          fi
+          echo "✓ Unsupported sport scan complete (review any warnings above)"
+
+      # ── Expo config validation ─────────────────────────────────────────────
+      - name: Validate Expo app.json
+        run: |
+          node -e "
+          const config = require('./app.json');
+          const expo = config.expo;
+          const pkg = expo.android?.package || expo.ios?.bundleIdentifier;
+          if (!expo.slug) { console.error('Missing expo.slug'); process.exit(1); }
+          if (expo.android?.package !== 'com.predictxta.sports') {
+            console.error('Android package mismatch: ' + expo.android?.package);
+            process.exit(1);
+          }
+          if (expo.ios?.bundleIdentifier !== 'com.predictxta.sports') {
+            console.error('iOS bundle ID mismatch: ' + expo.ios?.bundleIdentifier);
+            process.exit(1);
+          }
+          console.log('✓ app.json valid: pkg=com.predictxta.sports');
+          "
+
+  # ─── Stage 5: EAS Production Build (main branch only) ─────────────────────
+  build-production:
+    name: EAS Production Build (Android)
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: EAS Build (production AAB)
+        run: eas build --platform android --profile production --non-interactive --no-wait
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

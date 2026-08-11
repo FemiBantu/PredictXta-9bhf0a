@@ -32,18 +32,19 @@ export function getSportFamily(sport?: string | null): SportFamily {
   if (s === 'football' || s === 'soccer') return 'football';
   if (s === 'basketball') return 'basketball';
   if (s === 'tennis') return 'tennis';
-  if (s === 'tabletennis' || s === 'pingpong') return 'tennis'; // racket sport, no draw
-  if (s === 'badminton') return 'tennis'; // racket sport, no draw
   if (s === 'cricket') return 'cricket';
   if (s === 'baseball') return 'baseball';
   if (s === 'hockey' || s === 'icehockey') return 'hockey';
   if (s === 'americanfootball' || s === 'nfl') return 'american_football';
   if (s.includes('rugby')) return 'rugby';
-  if (s === 'afl' || s === 'australianfootball') return 'rugby'; // points-based contact sport
-  if (s === 'mma' || s === 'ufc' || s === 'boxing') return 'mma';
+  if (s === 'mma' || s === 'ufc') return 'mma';
+  if (s === 'boxing') return 'boxing'; // boxing has its own family (can draw via technical draw)
   if (s === 'volleyball') return 'volleyball';
   if (s === 'handball') return 'handball';
-  // All other sports (formula1, snooker, darts, esports, etc.) use generic layout
+  if (s === 'esports' || s === 'esport') return 'esports';
+  // Removed sports (formula1, afl, badminton, table-tennis, snooker, darts,
+  // cycling, athletics, motorsports, squash) must not reach production paths.
+  // They fall through to 'generic' which renders minimal sport-agnostic UI.
   return 'generic';
 }
 
