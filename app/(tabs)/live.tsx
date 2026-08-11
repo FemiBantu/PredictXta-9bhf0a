@@ -30,23 +30,22 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 type DataSource = 'sse' | 'polling' | 'supabase' | 'loading';
 
-// ─── 13 Supported sports only (unsupported sports removed) ──────────────────
+// ─── 13 canonical sports only (boxing + esports added; formula1/afl removed) ──
 const SPORT_EMOJI: Record<string, string> = {
   football: '⚽', basketball: '🏀', tennis: '🎾', cricket: '🏏',
   mma: '🥊', baseball: '⚾', hockey: '🏒', rugby: '🏉',
   handball: '🤾', volleyball: '🏐', 'american-football': '🏈',
-  formula1: '🏎️', 'formula-1': '🏎️', afl: '🏉',
+  boxing: '🥊', esports: '🎮',
 };
 
-// ─── DB sport key → display name (13 verified sports) ────────────────────────
+// ─── DB sport key → display name (13 canonical sports) ─────────────────────
 const DB_SPORT_TO_DISPLAY: Record<string, string> = {
   football: 'Football', basketball: 'Basketball', tennis: 'Tennis',
   baseball: 'Baseball', hockey: 'Hockey', rugby: 'Rugby',
   handball: 'Handball', volleyball: 'Volleyball',
   'american-football': 'American Football', americanfootball: 'American Football',
   cricket: 'Cricket', mma: 'MMA',
-  formula1: 'Formula 1', 'formula-1': 'Formula 1', f1: 'Formula 1',
-  afl: 'AFL', 'australian-football': 'AFL',
+  boxing: 'Boxing', esports: 'Esports',
 };
 
 function dbSportToDisplay(sport: string): string {
@@ -57,11 +56,11 @@ function dbSportToDisplay(sport: string): string {
   );
 }
 
-// ─── Group by sport (13 verified sports display order) ──────────────────────
+// ─── Group by sport (13 canonical sports display order) ─────────────────────
 const DISPLAY_SPORT_ORDER = [
   'Football', 'Basketball', 'Tennis', 'Cricket', 'Baseball',
   'Hockey', 'Rugby', 'Handball', 'Volleyball', 'American Football',
-  'MMA', 'Formula 1', 'AFL',
+  'MMA', 'Boxing', 'Esports',
 ];
 
 function groupBySport(matches: Match[]) {
