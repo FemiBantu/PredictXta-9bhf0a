@@ -1,3 +1,4 @@
+
 /**
  * services/multiModelPredictionService.ts
  *
@@ -54,7 +55,10 @@ export function getConsensusBadge(consensus: MultiModelConsensus | null): {
   if (modelsUsed >= 4 && modelsAgreed >= 3 && consensusPassed) {
     return { label: `${modelsAgreed}/4 Models Agree`, color: '#22C55E', icon: 'shield-checkmark-outline' };
   }
-  if (modelsUsed >= 3 && modelsAgreed >= 2) {
+  if (modelsUsed >= 3 && modelsAgreed >= 3) {
+    return { label: `${modelsAgreed}/3 Models Agree`, color: '#22C55E', icon: 'shield-checkmark-outline' };
+  }
+  if (modelsUsed >= 2 && modelsAgreed >= 2) {
     return { label: `${modelsAgreed}/${modelsUsed} Models Agree`, color: '#F59E0B', icon: 'analytics-outline' };
   }
   return { label: `${modelsUsed} Model${modelsUsed !== 1 ? 's' : ''} · Partial`, color: '#6B7280', icon: 'help-circle-outline' };
@@ -154,7 +158,24 @@ export async function generateMultiModelPrediction(
   }
 }
 
-// ─── Batch multi-model predictions (max 2 concurrent, heavier) ───────────────
+// Model provider labels for display in the UI
+export const AI_PROVIDER_LABELS: Record<string, string> = {
+  openai:    'GPT-5.5 (OpenAI)',
+  anthropic: 'Claude (Anthropic)',
+  gemini:    'Gemini (Google)',
+  groq:      'Llama (Meta via Groq)',
+};
+
+// Model ID → display name mapping for consensus breakdown UI
+export const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  gpt55:  'GPT-5.5',
+  claude: 'Claude',
+  gemini: 'Gemini 2.5',
+  llama:  'Llama 4',
+};
+
+// ─── Batch Prediction Function ────────────────────────────────────────────────
+// (max 2 concurrent, heavier)
 export async function batchMultiModelPredictions(
   matches: Match[],
   options: { userId?: string } = {},

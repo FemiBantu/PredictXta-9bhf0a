@@ -4,32 +4,33 @@
  * Tracks and enforces the 7,000 req/day budget across all providers.
  * Prevents quota exhaustion via dynamic interval adjustment.
  *
- * Supported sports: 13 total (v2.0 — 9 unsupported sports removed)
- *   API-Sports (quota-consuming — 10 sports):
+ * Canonical 13-sport registry (v3.0 — AFL/formula1 removed, boxing/esports added)
+ *   API-Sports (quota-consuming — 11 sports):
  *     football, basketball, hockey, handball, volleyball,
- *     rugby, baseball, american-football, mma, afl
- *   TheSportsDB (free tier — 0 API-Sports quota consumed — 3 sports):
- *     tennis, cricket, formula1
+ *     rugby, baseball, american-football, mma, boxing, esports
+ *   TheSportsDB (free tier — 0 API-Sports quota consumed — 2 sports):
+ *     tennis, cricket
  *
  * Budget allocation (7,000 total):
- *   Football Live          (288/day):  600  (8.6%)   was 2,000
- *   Basketball Live        (288/day):  300  (4.3%)   was 1,000
- *   Hockey Live            (288/day):  300  (4.3%)   new line
- *   Rugby Live             (288/day):  300  (4.3%)   new line
- *   Handball Live          (288/day):  300  (4.3%)   new line
- *   Volleyball Live        (288/day):  300  (4.3%)   new line
- *   Baseball Live          (288/day):  300  (4.3%)   new line
- *   American Football Live (288/day):  300  (4.3%)   new line
- *   MMA Live               (288/day):  300  (4.3%)   was in "other"
- *   AFL Live               (288/day):  300  (4.3%)   new line
- *   Tennis/Cricket/F1 (TSDB free):       0  (0.0%)   was 1,100
- *   Fixture fetches  (2× daily):        500  (7.1%)   was 900
+ *   Football Live          (288/day):  600  (8.6%)
+ *   Basketball Live        (288/day):  280  (4.0%)
+ *   Hockey Live            (288/day):  280  (4.0%)
+ *   Rugby Live             (288/day):  260  (3.7%)
+ *   Handball Live          (288/day):  260  (3.7%)
+ *   Volleyball Live        (288/day):  260  (3.7%)
+ *   Baseball Live          (288/day):  280  (4.0%)
+ *   American Football Live (288/day):  260  (3.7%)
+ *   MMA Live               (288/day):  260  (3.7%)
+ *   Boxing Live            (limited events): 150  (2.1%)
+ *   Esports Live           (288/day):  150  (2.1%)
+ *   Tennis/Cricket (TSDB free):          0  (0.0%)
+ *   Fixture fetches  (2× daily):        500  (7.1%)
  *   Odds (football leagues):            100  (1.4%)
- *   Standings (weekly avg):             100  (1.4%)   was 300
- *   Emergency Buffer:                 3,900 (55.7%)   was 300
+ *   Standings (weekly avg):             100  (1.4%)
+ *   Emergency Buffer:                 3,760 (53.7%)
  *   ────────────────────────────────────────────────
- *   EXPECTED daily total:             ~3,100          was ~6,700
- *   Available headroom:               ~3,900          was ~300
+ *   EXPECTED daily total:             ~3,240
+ *   Available headroom:               ~3,760
  *
  * Alert thresholds (recalibrated for ~3,100/day normal baseline):
  *   > 60% (~4,200 calls): CAUTION  — unexpected calls, investigate
@@ -68,22 +69,24 @@ export interface QuotaReport {
 
 // Daily budget allocations per sport / category (API-Sports quota only)
 // Tennis, cricket, formula1 use TheSportsDB (free) — not counted here.
+// Daily budget per category (API-Sports quota only; TSDB is free)
 const DAILY_BUDGETS: Record<string, number> = {
-  'football-live':            600,  // most live coverage globally
-  'basketball-live':          300,
-  'hockey-live':              300,
-  'rugby-live':               300,
-  'handball-live':            300,
-  'volleyball-live':          300,
-  'baseball-live':            300,
-  'american-football-live':   300,
-  'mma-live':                 300,
-  'afl-live':                 300,
-  // tennis-live, cricket-live, formula1-live → TSDB free (0 API-Sports quota)
-  'fixtures':                 500,  // morning + evening preloads, 13 sports
+  'football-live':            600,  // highest global coverage demand
+  'basketball-live':          280,
+  'hockey-live':              280,
+  'rugby-live':               260,
+  'handball-live':            260,
+  'volleyball-live':          260,
+  'baseball-live':            280,
+  'american-football-live':   260,
+  'mma-live':                 260,
+  'boxing-live':              150,  // infrequent events — lower budget
+  'esports-live':             150,  // API-Sports esports sub-domain
+  // tennis-live, cricket-live → TSDB free (0 API-Sports quota)
+  'fixtures':                 500,  // morning + evening preloads, 13 canonical sports
   'odds':                     100,  // football major leagues only
   'standings':                100,  // weekly, averaged daily
-  'emergency':               3900,  // buffer — 57% headroom (was 4%)
+  'emergency':               3760,  // buffer — ~54% headroom
 };
 
 const TOTAL_DAILY_BUDGET = 7000; // hard API-Sports platform limit
@@ -193,17 +196,18 @@ function estimateCategoryUsage(
       const provider = String(r.provider_name ?? '');
       const endpoint = String(r.endpoint ?? '');
       switch (category) {
-        case 'football-live':           return provider === 'api-football' && endpoint.includes('live');
-        case 'basketball-live':         return provider.includes('basketball') && !endpoint.includes('standing');
-        case 'hockey-live':             return provider.includes('hockey')     && !endpoint.includes('standing');
-        case 'rugby-live':              return provider.includes('rugby')      && !endpoint.includes('standing');
-        case 'handball-live':           return provider.includes('handball')   && !endpoint.includes('standing');
-        case 'volleyball-live':         return provider.includes('volleyball') && !endpoint.includes('standing');
-        case 'baseball-live':           return provider.includes('baseball')   && !endpoint.includes('standing');
-        case 'american-football-live':  return provider.includes('american')   && !endpoint.includes('standing');
-        case 'mma-live':                return provider.includes('mma')        && !endpoint.includes('standing');
-        case 'afl-live':                return provider.includes('afl')        && !endpoint.includes('standing');
-        // tennis, cricket, formula1 → TSDB (free) — always 0
+        case 'football-live':            return provider === 'api-football' && endpoint.includes('live');
+        case 'basketball-live':          return provider.includes('basketball') && !endpoint.includes('standing');
+        case 'hockey-live':              return provider.includes('hockey')      && !endpoint.includes('standing');
+        case 'rugby-live':               return provider.includes('rugby')       && !endpoint.includes('standing');
+        case 'handball-live':            return provider.includes('handball')    && !endpoint.includes('standing');
+        case 'volleyball-live':          return provider.includes('volleyball')  && !endpoint.includes('standing');
+        case 'baseball-live':            return provider.includes('baseball')    && !endpoint.includes('standing');
+        case 'american-football-live':   return provider.includes('american')    && !endpoint.includes('standing');
+        case 'mma-live':                 return provider.includes('mma')         && !endpoint.includes('standing');
+        case 'boxing-live':              return provider.includes('boxing')      && !endpoint.includes('standing');
+        case 'esports-live':             return provider.includes('esports')     && !endpoint.includes('standing');
+        // tennis, cricket → TSDB (free) — always 0 API-Sports quota
         case 'fixtures':   return endpoint.includes('fixture') || endpoint.includes('game?date');
         case 'odds':       return endpoint.includes('odd');
         case 'standings':  return endpoint.includes('standing');
@@ -216,20 +220,21 @@ function estimateCategoryUsage(
 
 function getCategoryBaseInterval(category: string): number {
   const intervals: Record<string, number> = {
-    'football-live':          15,   // 15s base for live football
-    'basketball-live':        20,
-    'hockey-live':            25,
-    'rugby-live':             30,
-    'handball-live':          30,
-    'volleyball-live':        30,
-    'baseball-live':          30,
-    'american-football-live': 30,
-    'mma-live':               45,   // less frequent events
-    'afl-live':               30,
-    'fixtures':             3600,   // 1h between fixture refreshes
-    'odds':                 3600,
-    'standings':            3600,
-    'emergency':           86400,   // buffer slot — never fetched directly
+    'football-live':           15,   // 15s base for live football
+    'basketball-live':         20,
+    'hockey-live':             25,
+    'rugby-live':              30,
+    'handball-live':           30,
+    'volleyball-live':         30,
+    'baseball-live':           30,
+    'american-football-live':  30,
+    'mma-live':                45,   // infrequent events
+    'boxing-live':             120,  // rare live fights
+    'esports-live':            30,
+    'fixtures':              3600,   // 1h between fixture refreshes
+    'odds':                  3600,
+    'standings':             3600,
+    'emergency':            86400,   // buffer slot — never fetched directly
   };
   return intervals[category] ?? 60;
 }
@@ -250,7 +255,7 @@ export async function canFetch(
       const liveCategories = [
         'football-live', 'basketball-live', 'hockey-live', 'rugby-live',
         'handball-live', 'volleyball-live', 'baseball-live',
-        'american-football-live', 'mma-live', 'afl-live',
+        'american-football-live', 'mma-live', 'boxing-live', 'esports-live',
       ];
       return liveCategories.includes(category);
     }

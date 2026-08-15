@@ -1,5 +1,23 @@
+/**
+ * supabase/functions/generate-prediction/index.ts  v6.0
+ *
+ * Upgraded Prediction Pipeline:
+ *   1. Quantitative sport-specific model (math anchor)
+ *   2. AI Provider Router: OpenAI → Gemini → Groq (auto-failover, circuit breaker)
+ *   3. LLMs receive Verified Facts Object — constrained to ±8% deviation
+ *   4. Quality gate validation before storage
+ *   5. Idempotency: skip if recent prediction already exists
+ *   6. Full audit logging
+ *
+ * Cost optimization:
+ *   - DQ < 40 → Groq only (fast, cheap)
+ *   - DQ 40–70 → primary_with_fallback (OpenAI → Gemini → Groq)
+ *   - DQ ≥ 70 + high-value league → consensus_two (OpenAI + Gemini)
+ *   - All LLMs unavailable → quantitative model only (still published)
+ */
+
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { corsHeaders } from '../_shared/cors.ts';
+import { getCorsHeaders, handleCorsOptions } from '../_shared/cors.ts';
 import {
   applySecurityMiddleware,
   applyUserRateLimit,
@@ -7,407 +25,229 @@ import {
   secureResponse,
   secureErrorResponse,
 } from '../_shared/security.ts';
+import {
+  runQuantitativeModel,
+  computeDQScore,
+  normToHundred,
+  marketImplied,
+  type MatchFeatures,
+  type QuantModelOutput,
+} from '../_shared/quantitativeModels.ts';
+import {
+  routeAICall,
+  routeConsensusCall,
+  selectRoutingStrategy,
+  isHighValueLeague,
+  parseAndValidatePredictionJSON,
+  getProviderCircuitHealth,
+  type AICallResult,
+  type RoutingStrategy,
+} from '../_shared/aiProviderRouter.ts';
+import { runQualityGate, type PredictionForGate } from '../_shared/qualityGate.ts';
 
-// ─── Model Configuration ─────────────────────────────────────────────────────
-const OPENAI_MODEL      = 'gpt-4.1';
-const OPENAI_MODEL_MINI = 'gpt-4.1-mini';
-const ONSPACE_MODEL     = 'google/gemini-2.5-flash';
-const OPENAI_BASE       = 'https://api.openai.com/v1';
-const GROQ_BASE         = 'https://api.groq.com/openai/v1';
-const GEMINI_BASE       = 'https://generativelanguage.googleapis.com/v1beta/openai';
-// Ordered by preference — newest/most capable first
-const GROQ_MODELS       = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama3-70b-8192'];
-const GEMINI_MODELS     = ['gemini-2.0-flash', 'gemini-1.5-flash'];
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface MatchInput {
-  id: string;
-  sport: string;
-  homeTeam: string;
-  awayTeam: string;
-  league: string;
-  country?: string;
-  season?: string;
-  homeScore?: number;
-  awayScore?: number;
-  status?: string;
-  minute?: number;
-  venue?: string;
-  homeForm?: string[];
-  awayForm?: string[];
-  homeStandingsPos?: number;
-  awayStandingsPos?: number;
-  homeGoalsScored?: number;
-  awayGoalsScored?: number;
-  homeGoalsConceded?: number;
-  awayGoalsConceded?: number;
-  h2h?: Array<{ homeTeam: string; awayTeam: string; homeScore: number; awayScore: number; date: string }>;
-  injuries?: string[];
-  suspensions?: string[];
-  homeOdds?: number;
-  drawOdds?: number;
-  awayOdds?: number;
-  stats?: Record<string, unknown> | null;
-  homePace?: number;
-  awayPace?: number;
-  homeORtg?: number;
-  awayORtg?: number;
-  homeDRtg?: number;
-  awayDRtg?: number;
-  homeServeWin?: number;
-  awayServeWin?: number;
-  homeReturnWin?: number;
-  awayReturnWin?: number;
-  homeSurfaceWin?: number;
-  awaySurfaceWin?: number;
-  homeATPRank?: number;
-  awayATPRank?: number;
-  homeBattingAvg?: number;
-  awayBattingAvg?: number;
-  homeERA?: number;
-  awayERA?: number;
-  homeWHIP?: number;
-  awayWHIP?: number;
-  homeRunRate?: number;
-  awayRunRate?: number;
-}
-
-// ─── Sport Configuration ─────────────────────────────────────────────────────
-interface SportConfig {
-  drawPossible: boolean;
-  defaultOULine: number;
-  ouUnit: string;
-  hasCorners: boolean;
-  hasCards: boolean;
-  hasBTTS: boolean;
-  hasHalftime: boolean;
-}
-
-const SPORT_CONFIGS: Record<string, SportConfig> = {
-  football:   { drawPossible: true,  defaultOULine: 2.5,   ouUnit: 'goals',  hasCorners: true,  hasCards: true,  hasBTTS: true,  hasHalftime: true  },
-  soccer:     { drawPossible: true,  defaultOULine: 2.5,   ouUnit: 'goals',  hasCorners: true,  hasCards: true,  hasBTTS: true,  hasHalftime: true  },
-  basketball: { drawPossible: false, defaultOULine: 215.5, ouUnit: 'points', hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: true  },
-  tennis:     { drawPossible: false, defaultOULine: 2.5,   ouUnit: 'sets',   hasCorners: false, hasCards: false, hasBTTS: true,  hasHalftime: false },
-  cricket:    { drawPossible: true,  defaultOULine: 320.5, ouUnit: 'runs',   hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: false },
-  baseball:   { drawPossible: false, defaultOULine: 8.5,   ouUnit: 'runs',   hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: true  },
-  hockey:     { drawPossible: false, defaultOULine: 5.5,   ouUnit: 'goals',  hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: true  },
-  rugby:      { drawPossible: true,  defaultOULine: 42.5,  ouUnit: 'points', hasCorners: false, hasCards: true,  hasBTTS: true,  hasHalftime: true  },
-  mma:        { drawPossible: false, defaultOULine: 2.5,   ouUnit: 'rounds', hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: false },
-  boxing:     { drawPossible: false, defaultOULine: 8.5,   ouUnit: 'rounds', hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: false },
-  handball:   { drawPossible: false, defaultOULine: 55.5,  ouUnit: 'goals',  hasCorners: false, hasCards: true,  hasBTTS: false, hasHalftime: true  },
-  volleyball: { drawPossible: false, defaultOULine: 3.5,   ouUnit: 'sets',   hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: false },
-  esports:    { drawPossible: false, defaultOULine: 2.5,   ouUnit: 'maps',   hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: false },
-  formula1:   { drawPossible: false, defaultOULine: 3.5,   ouUnit: 'pos.',   hasCorners: false, hasCards: false, hasBTTS: false, hasHalftime: false },
+// ─── Sport configuration (default lines per sport) ───────────────────────────
+const DEFAULT_OU_LINES: Record<string, number> = {
+  football: 2.5, basketball: 215.5, tennis: 2.5, cricket: 320.5,
+  baseball: 8.5, hockey: 5.5, rugby: 42.5, mma: 2.5, boxing: 8.5,
+  handball: 55.5, volleyball: 3.5, esports: 2.5,
+  'american-football': 44.5,
 };
 
-function getSportConfig(sport: string): SportConfig {
-  return SPORT_CONFIGS[sport.toLowerCase()] ?? SPORT_CONFIGS['football'];
+const DRAW_POSSIBLE_SPORTS = new Set(['football', 'soccer', 'cricket', 'rugby', 'handball']);
+
+function getOULine(sport: string): number {
+  return DEFAULT_OU_LINES[sport.toLowerCase()] ?? 2.5;
 }
 
-// ─── Statistical Engines ──────────────────────────────────────────────────────
-function eloWinProb(eloDiff: number): number {
-  return 1 / (1 + Math.pow(10, -eloDiff / 400));
+// ─── Build LLM system prompt ─────────────────────────────────────────────────
+function buildSystemPrompt(sport: string): string {
+  const drawRule = DRAW_POSSIBLE_SPORTS.has(sport.toLowerCase())
+    ? 'Draw IS possible for this sport.'
+    : 'NO DRAW for this sport — draw_prob MUST be 0, ht_draw_prob MUST be 0.';
+
+  return `You are a sportsbook-grade prediction engine. You MUST follow these rules absolutely:
+
+1. Return ONLY a valid JSON object — no markdown, no code fences, no text outside JSON.
+2. Use ONLY the statistics in the VERIFIED FACTS OBJECT. NEVER invent statistics.
+3. Anchor home_win_prob / draw_prob / away_win_prob to the Model Probability Anchor — max ±8% deviation.
+4. home_win_prob + draw_prob + away_win_prob = EXACTLY 100.
+5. ht_home_prob + ht_draw_prob + ht_away_prob = EXACTLY 100.
+6. ${drawRule}
+7. If data is critically insufficient: {"status":"insufficient_data","message":"Insufficient data for reliable prediction."}
+
+CONFIDENCE CALIBRATION:
+- Never exceed 92% confidence regardless of apparent certainty.
+- DQ < 40: cap at 58%. DQ 40-60: cap at 72%. DQ 60-80: cap at 84%. DQ >= 80: up to 92%.
+- Base confidence on model agreement, data quality, and historical reliability.
+
+OUTPUT — return ONLY this exact JSON schema:
+{"status":"success","home_win_prob":<int>,"draw_prob":<int>,"away_win_prob":<int>,"predicted_result":<"home_win"|"draw"|"away_win">,"confidence":<int 45-92>,"risk_level":<"Low"|"Medium"|"High">,"value_score":<int 0-100>,"market_edge_pct":<int -40 to 40>,"sharp_signal":<"bullish"|"neutral"|"bearish">,"suggested_stake":<"low"|"medium"|"high">,"over_under":<"over"|"under">,"over_under_line":<number>,"predicted_home_goals":<number>,"predicted_away_goals":<number>,"btts":<"yes"|"no">,"correct_score":<string>,"corners_over_under":<"over"|"under">,"corners_line":<number>,"cards_total":<number>,"cards_over_under":<"over"|"under">,"asian_handicap_line":<number>,"asian_handicap_pick":<"home"|"away">,"ht_result":<"home_win"|"draw"|"away_win">,"ht_home_prob":<int>,"ht_draw_prob":<int>,"ht_away_prob":<int>,"clean_sheet_home":<"yes"|"no">,"clean_sheet_away":<"yes"|"no">,"first_goal":<"home"|"away"|"no_goal">,"both_score_ht":<"yes"|"no">,"anytime_scorecast":<string>,"ai_analysis":<string 2-3 sentences>,"key_factors":<array of 5 strings>,"warning_flags":<array 0-3 strings>,"key_alpha_metric":<string>}`;
 }
 
-function posToElo(pos: number, total = 20): number {
-  return Math.round(1700 + ((total - pos) / Math.max(total - 1, 1)) * 300);
+function buildUserPrompt(match: MatchFeatures, quantOutput: QuantModelOutput): string {
+  const ouLine = getOULine(match.sport ?? 'football');
+  const drawNote = DRAW_POSSIBLE_SPORTS.has((match.sport ?? 'football').toLowerCase())
+    ? 'Draw is possible.' : 'No draws for this sport.';
+
+  return `Generate a ${(match.sport ?? 'football').toUpperCase()} prediction.
+Match: ${match.homeTeam} vs ${match.awayTeam} | ${match.league ?? 'Unknown League'}
+Status: ${match.status ?? 'upcoming'} | O/U default: ~${ouLine} | ${drawNote}
+Data Quality: ${quantOutput.dqScore}/100
+Quantitative Method: ${quantOutput.modelMethod}
+
+${quantOutput.verifiedFactsText}
+
+INSTRUCTION: Anchor probabilities to the Model Probability Anchor above (±8% max deviation). Provide deeper contextual analysis. Return ONLY JSON.`;
 }
 
-function formScore(form: string[]): number {
-  if (!form || form.length === 0) return 50;
-  const weights = [2, 1.6, 1.4, 1.2, 1];
-  const recent = form.slice(-5).reverse();
-  let tot = 0, wSum = 0;
-  recent.forEach((r, i) => {
-    const w = weights[Math.min(i, weights.length - 1)];
-    const pts = r.toUpperCase() === 'W' ? 3 : r.toUpperCase() === 'D' ? 1 : 0;
-    tot += pts * w; wSum += 3 * w;
-  });
-  return Math.round((tot / wSum) * 100);
-}
+// ─── Merge quantitative output with LLM output ───────────────────────────────
+function mergeOutputs(
+  quant: QuantModelOutput,
+  llmParsed: Record<string, unknown> | null,
+  sport: string,
+): Record<string, unknown> {
+  const drawPossible = DRAW_POSSIBLE_SPORTS.has(sport.toLowerCase());
 
-function poissonPMF(k: number, lambda: number): number {
-  if (lambda <= 0) return k === 0 ? 1 : 0;
-  let r = Math.exp(-lambda);
-  for (let i = 1; i <= k; i++) r *= lambda / i;
-  return r;
-}
-
-function poissonMatchProbs(lambdaH: number, lambdaA: number, maxGoals = 8): { hw: number; d: number; aw: number } {
-  let hw = 0, d = 0, aw = 0;
-  for (let h = 0; h <= maxGoals; h++) {
-    for (let a = 0; a <= maxGoals; a++) {
-      const p = poissonPMF(h, lambdaH) * poissonPMF(a, lambdaA);
-      if (h > a) hw += p;
-      else if (h === a) d += p;
-      else aw += p;
-    }
-  }
-  return { hw, d, aw };
-}
-
-function footballPoissonEngine(match: MatchInput): { lambdaH: number; lambdaA: number; hw: number; d: number; aw: number } | null {
-  if (!match.homeGoalsScored || !match.awayGoalsScored) return null;
-  const homeGP = 20;
-  const avgGoalPerGame = 2.6;
-  const homeAttack  = (match.homeGoalsScored  / homeGP) / (avgGoalPerGame / 2);
-  const homeDefence = (match.homeGoalsConceded ?? match.homeGoalsScored) / homeGP / (avgGoalPerGame / 2);
-  const awayAttack  = (match.awayGoalsScored  / homeGP) / (avgGoalPerGame / 2);
-  const awayDefence = (match.awayGoalsConceded ?? match.awayGoalsScored) / homeGP / (avgGoalPerGame / 2);
-  const lambdaH = Math.max(0.3, homeAttack * awayDefence * (avgGoalPerGame / 2) * 1.25);
-  const lambdaA = Math.max(0.2, awayAttack * homeDefence * (avgGoalPerGame / 2));
-  const probs = poissonMatchProbs(lambdaH, lambdaA);
-  const total = probs.hw + probs.d + probs.aw || 1;
-  return { lambdaH, lambdaA, hw: Math.round((probs.hw/total)*100), d: Math.round((probs.d/total)*100), aw: Math.round((probs.aw/total)*100) };
-}
-
-function basketballEngine(match: MatchInput): { homeTotal: number; awayTotal: number; total: number } | null {
-  if (!match.homeORtg || !match.awayORtg || !match.homePace || !match.awayPace) return null;
-  const pace = (match.homePace + match.awayPace) / 2;
-  const poss = pace * 0.48;
-  const homeTotal = Math.round((match.homeORtg / 100) * poss * (100 / (match.awayDRtg ?? 110)));
-  const awayTotal = Math.round((match.awayORtg / 100) * poss * (100 / (match.homeDRtg ?? 112)));
-  return { homeTotal, awayTotal, total: homeTotal + awayTotal };
-}
-
-function tennisEngine(match: MatchInput): { homeWinProb: number } | null {
-  if (!match.homeServeWin && !match.homeATPRank) return null;
-  let homeAdv = 0;
-  if (match.homeATPRank && match.awayATPRank) {
-    const homeElo = Math.max(1000, 1700 - (match.homeATPRank - 1) * 4);
-    const awayElo  = Math.max(1000, 1700 - (match.awayATPRank - 1)  * 4);
-    homeAdv += eloWinProb(homeElo - awayElo) - 0.5;
-  }
-  if (match.homeServeWin && match.awayServeWin) homeAdv += (match.homeServeWin - match.awayServeWin) / 200;
-  if (match.homeSurfaceWin && match.awaySurfaceWin) homeAdv += (match.homeSurfaceWin - match.awaySurfaceWin) / 200;
-  return { homeWinProb: Math.round(Math.min(85, Math.max(15, (0.5 + homeAdv) * 100))) };
-}
-
-function computeDQScore(match: MatchInput): number {
-  let s = 40;
-  if (match.homeForm?.length && match.homeForm.length >= 3) s += 10;
-  if (match.awayForm?.length && match.awayForm.length >= 3) s += 10;
-  if (match.h2h?.length && match.h2h.length >= 2) s += 10;
-  if (match.homeStandingsPos && match.awayStandingsPos) s += 8;
-  if (match.homeGoalsScored !== undefined && match.awayGoalsScored !== undefined) s += 8;
-  if (match.homeOdds && match.awayOdds) s += 10;
-  if (match.injuries?.length) s += 4;
-  if (match.stats && Object.keys(match.stats).length > 0) s += 5;
-  if (match.homeORtg && match.awayORtg) s += 5;
-  if (match.homeServeWin && match.awayServeWin) s += 5;
-  if (match.homeATPRank && match.awayATPRank) s += 5;
-  return Math.min(100, s);
-}
-
-function marketImplied(home?: number, draw?: number | null, away?: number): { hw: number; d: number; aw: number } | null {
-  if (!home || !away) return null;
-  const rawHW = 100 / home;
-  const rawD  = draw ? 100 / draw : 0;
-  const rawAW = 100 / away;
-  const total = rawHW + rawD + rawAW;
-  return { hw: Math.round(rawHW / total * 100), d: Math.round(rawD / total * 100), aw: Math.round(rawAW / total * 100) };
-}
-
-function normProbs(a: number, b: number, c: number): [number, number, number] {
-  const total = a + b + c;
-  if (total <= 0) return [40, 20, 40];
-  const na = Math.round((a / total) * 100);
-  const nb = Math.round((b / total) * 100);
-  return [Math.max(0, na), Math.max(0, nb), Math.max(0, 100 - na - nb)];
-}
-
-function buildStatisticalContext(match: MatchInput): string {
-  const sport = match.sport?.toLowerCase() ?? 'football';
-  const lines: string[] = ['\n── PRE-COMPUTED STATISTICAL CONTEXT ──'];
-
-  if (match.homeForm?.length || match.awayForm?.length) {
-    const hfs = formScore(match.homeForm ?? []);
-    const afs = formScore(match.awayForm ?? []);
-    lines.push(`Form Scores (0-100): ${match.homeTeam} = ${hfs} | ${match.awayTeam} = ${afs}`);
-    lines.push(`Form Momentum: ${hfs > afs ? match.homeTeam + ' in better form' : afs > hfs ? match.awayTeam + ' in better form' : 'Even form'}`);
+  if (!llmParsed) {
+    // Quantitative-only prediction
+    const ouLine = quant.totalExpected != null
+      ? Math.round(quant.totalExpected * 2) / 2
+      : getOULine(sport);
+    const overUnder = quant.expectedHomeScore != null && quant.expectedAwayScore != null
+      ? (quant.expectedHomeScore + quant.expectedAwayScore) > ouLine ? 'over' : 'under'
+      : 'over';
+    const [nHH, nHD, nHA] = normToHundred(35, drawPossible ? 40 : 0, 25);
+    return {
+      home_win_prob: quant.homeWinProb,
+      draw_prob: quant.drawProb,
+      away_win_prob: quant.awayWinProb,
+      predicted_result: quant.predictedResult,
+      confidence: quant.confidence,
+      risk_level: quant.confidence >= 80 ? 'Low' : quant.confidence >= 60 ? 'Medium' : 'High',
+      value_score: 50,
+      market_edge_pct: 0,
+      sharp_signal: 'neutral',
+      suggested_stake: quant.confidence >= 80 ? 'medium' : 'low',
+      over_under: overUnder,
+      over_under_line: ouLine,
+      predicted_home_goals: quant.expectedHomeScore ?? 1.4,
+      predicted_away_goals: quant.expectedAwayScore ?? 1.1,
+      btts: quant.drawProb > 20 ? 'yes' : 'no',
+      correct_score: '1-1',
+      corners_over_under: 'over', corners_line: sport === 'football' ? 9.5 : 0,
+      cards_total: sport === 'football' ? 3.5 : 0, cards_over_under: 'over',
+      asian_handicap_line: 0, asian_handicap_pick: 'home',
+      ht_result: 'draw', ht_home_prob: nHH, ht_draw_prob: nHD, ht_away_prob: nHA,
+      clean_sheet_home: 'no', clean_sheet_away: 'no',
+      first_goal: 'home', both_score_ht: 'no', anytime_scorecast: '',
+      ai_analysis: `Statistical model prediction: ${quant.modelMethod}. Quantitative probability anchor applied.`,
+      key_factors: ['Statistical model consensus', 'Elo rating differential', 'Recent form analysis', 'Data quality considered', 'Market signal incorporated'],
+      warning_flags: quant.dqScore < 50 ? [`Limited data quality (${quant.dqScore}/100)`] : [],
+      key_alpha_metric: `Model confidence: ${quant.confidence}%`,
+      source: 'quantitative_only',
+    };
   }
 
-  if (match.homeStandingsPos && match.awayStandingsPos) {
-    const homeElo = posToElo(match.homeStandingsPos);
-    const awayElo  = posToElo(match.awayStandingsPos);
-    const eloDiff  = homeElo - awayElo + 50;
-    const eloHW    = Math.round(eloWinProb(eloDiff) * 100);
-    lines.push(`ELO Estimates: ${match.homeTeam} = ${homeElo} | ${match.awayTeam} = ${awayElo}`);
-    lines.push(`ELO-implied Home Win Probability: ${eloHW}%`);
-  }
+  // LLM output: clamp probabilities to ±8% of quantitative anchor
+  const clamp = (llmVal: number, anchor: number, maxDev = 8) =>
+    Math.max(0, Math.min(100, Math.round(
+      Math.min(anchor + maxDev, Math.max(anchor - maxDev, llmVal))
+    )));
 
-  if (sport === 'football' || sport === 'soccer') {
-    const pe = footballPoissonEngine(match);
-    if (pe) {
-      lines.push(`Poisson Engine: lambdaH=${pe.lambdaH.toFixed(2)} lambdaA=${pe.lambdaA.toFixed(2)}`);
-      lines.push(`Poisson Probabilities: Home Win ${pe.hw}% | Draw ${pe.d}% | Away Win ${pe.aw}%`);
-      lines.push(`Expected Goals: ${match.homeTeam} ${pe.lambdaH.toFixed(2)} | ${match.awayTeam} ${pe.lambdaA.toFixed(2)}`);
-      lines.push(`BTTS Probability (Poisson): ${Math.round((1 - poissonPMF(0, pe.lambdaH)) * (1 - poissonPMF(0, pe.lambdaA)) * 100)}%`);
-    }
-    if (match.homeGoalsScored !== undefined && match.homeGoalsConceded !== undefined) {
-      lines.push(`Season Goals: ${match.homeTeam} scored ${match.homeGoalsScored} conceded ${match.homeGoalsConceded}`);
-      lines.push(`Season Goals: ${match.awayTeam} scored ${match.awayGoalsScored ?? '?'} conceded ${match.awayGoalsConceded ?? '?'}`);
-    }
-  }
+  const llmHW = clamp(Number(llmParsed.home_win_prob) || 0, quant.homeWinProb);
+  const llmD  = drawPossible ? clamp(Number(llmParsed.draw_prob) || 0, quant.drawProb) : 0;
+  const llmAW = clamp(Number(llmParsed.away_win_prob) || 0, quant.awayWinProb);
+  const [nHW, nD, nAW] = normToHundred(llmHW, llmD, llmAW);
 
-  if (sport === 'basketball') {
-    const be = basketballEngine(match);
-    if (be) {
-      lines.push(`Pace Engine: ${match.homeTeam} pace=${match.homePace} | ${match.awayTeam} pace=${match.awayPace}`);
-      lines.push(`Efficiency: ${match.homeTeam} ORtg=${match.homeORtg} DRtg=${match.homeDRtg} | ${match.awayTeam} ORtg=${match.awayORtg} DRtg=${match.awayDRtg}`);
-      lines.push(`Projected Points: ${match.homeTeam} ${be.homeTotal} | ${match.awayTeam} ${be.awayTotal} | Total ${be.total}`);
-    }
-  }
+  const ouLine = Number(llmParsed.over_under_line ?? getOULine(sport));
+  const predHG = Number(llmParsed.predicted_home_goals ?? (quant.expectedHomeScore ?? 1.4));
+  const predAG = Number(llmParsed.predicted_away_goals ?? (quant.expectedAwayScore ?? 1.1));
+  const overUnder = String(llmParsed.over_under ?? ((predHG + predAG > ouLine) ? 'over' : 'under')).toLowerCase() === 'under' ? 'under' : 'over';
 
-  if (sport === 'tennis') {
-    const te = tennisEngine(match);
-    if (match.homeATPRank && match.awayATPRank) lines.push(`ATP/WTA Rankings: ${match.homeTeam} #${match.homeATPRank} | ${match.awayTeam} #${match.awayATPRank}`);
-    if (match.homeServeWin && match.awayServeWin) lines.push(`Serve Win %: ${match.homeTeam} ${match.homeServeWin}% | ${match.awayTeam} ${match.awayServeWin}%`);
-    if (match.homeSurfaceWin && match.awaySurfaceWin) lines.push(`Surface Win %: ${match.homeTeam} ${match.homeSurfaceWin}% | ${match.awayTeam} ${match.awaySurfaceWin}%`);
-    if (te) lines.push(`Engine-implied Win Probability: ${match.homeTeam} ${te.homeWinProb}% | ${match.awayTeam} ${100 - te.homeWinProb}%`);
-  }
+  // DQ-gated confidence ceiling
+  let llmConf = Math.max(45, Math.min(92, Number(llmParsed.confidence) || quant.confidence));
+  if (quant.dqScore < 40) llmConf = Math.min(llmConf, 58);
+  else if (quant.dqScore < 60) llmConf = Math.min(llmConf, 72);
+  else if (quant.dqScore < 80) llmConf = Math.min(llmConf, 84);
 
-  if (sport === 'baseball') {
-    if (match.homeERA !== undefined && match.awayERA !== undefined) lines.push(`Pitching (ERA): ${match.homeTeam} ${match.homeERA.toFixed(2)} | ${match.awayTeam} ${match.awayERA.toFixed(2)}`);
-    if (match.homeWHIP !== undefined && match.awayWHIP !== undefined) lines.push(`WHIP: ${match.homeTeam} ${match.homeWHIP.toFixed(2)} | ${match.awayTeam} ${match.awayWHIP.toFixed(2)}`);
-    if (match.homeBattingAvg !== undefined && match.awayBattingAvg !== undefined) lines.push(`Batting Average: ${match.homeTeam} .${String(Math.round(match.homeBattingAvg * 1000)).padStart(3, '0')} | ${match.awayTeam} .${String(Math.round(match.awayBattingAvg * 1000)).padStart(3, '0')}`);
-  }
+  const RESULTS = ['home_win', 'draw', 'away_win'] as const;
+  const rawResult = String(llmParsed.predicted_result ?? quant.predictedResult);
+  const predictedResult = RESULTS.includes(rawResult as any)
+    ? (rawResult as typeof RESULTS[number])
+    : quant.predictedResult;
 
-  if (sport === 'cricket') {
-    if (match.homeRunRate !== undefined && match.awayRunRate !== undefined) lines.push(`Run Rate: ${match.homeTeam} ${match.homeRunRate.toFixed(2)} | ${match.awayTeam} ${match.awayRunRate.toFixed(2)}`);
-  }
+  const rawHtResult = String(llmParsed.ht_result ?? 'draw');
+  const htResult = RESULTS.includes(rawHtResult as any) ? (rawHtResult as typeof RESULTS[number]) : 'draw';
+  const [nHH, nHD, nHA] = normToHundred(
+    Number(llmParsed.ht_home_prob) || 35,
+    drawPossible ? (Number(llmParsed.ht_draw_prob) || 40) : 0,
+    Number(llmParsed.ht_away_prob) || 25,
+  );
 
-  const implied = marketImplied(match.homeOdds, match.drawOdds, match.awayOdds);
-  if (implied) {
-    lines.push(`Market Odds: 1=${match.homeOdds?.toFixed(2)} X=${match.drawOdds?.toFixed(2) ?? 'N/A'} 2=${match.awayOdds?.toFixed(2)}`);
-    lines.push(`Market-Implied Probs: Home ${implied.hw}% | Draw ${implied.d}% | Away ${implied.aw}%`);
-  }
+  const rawRisk = String(llmParsed.risk_level ?? '');
+  const riskLevel = (['Low', 'Medium', 'High'] as const).includes(rawRisk as any)
+    ? rawRisk as 'Low' | 'Medium' | 'High'
+    : llmConf >= 80 ? 'Low' : llmConf >= 60 ? 'Medium' : 'High';
 
-  if (match.h2h?.length) {
-    let hw = 0, d = 0, aw = 0;
-    for (const g of match.h2h) {
-      if (g.homeTeam === match.homeTeam) { if (g.homeScore > g.awayScore) hw++; else if (g.homeScore === g.awayScore) d++; else aw++; }
-      else { if (g.awayScore > g.homeScore) hw++; else if (g.homeScore === g.awayScore) d++; else aw++; }
-    }
-    lines.push(`H2H Record (last ${match.h2h.length}): ${match.homeTeam} wins=${hw} draws=${d} ${match.awayTeam} wins=${aw}`);
-    const recent = match.h2h[0];
-    if (recent) lines.push(`Most Recent H2H: ${recent.homeTeam} ${recent.homeScore}-${recent.awayScore} ${recent.awayTeam} (${recent.date.slice(0, 10)})`);
-  }
+  const rawSignal = String(llmParsed.sharp_signal ?? 'neutral').toLowerCase();
+  const sharpSignal = (['bullish', 'neutral', 'bearish'] as const).includes(rawSignal as any)
+    ? rawSignal as 'bullish' | 'neutral' | 'bearish' : 'neutral';
 
-  lines.push('── END STATISTICAL CONTEXT ──');
-  return lines.join('\n');
-}
+  const rawStake = String(llmParsed.suggested_stake ?? '').toLowerCase();
+  const suggestedStake = (['low', 'medium', 'high'] as const).includes(rawStake as any)
+    ? rawStake as 'low' | 'medium' | 'high' : 'medium';
 
-function buildSystemPrompt(): string {
-  return `You are the PredictXta Universal Sports Intelligence Engine — a sportsbook-grade AI prediction system backed by statistical pre-computation.
+  const rawFG = String(llmParsed.first_goal ?? 'home').toLowerCase();
+  const firstGoal = (['home', 'away', 'no_goal'] as const).includes(rawFG as any)
+    ? rawFG as 'home' | 'away' | 'no_goal' : 'home';
 
-CRITICAL RULES:
-- Respond ONLY with a valid JSON object — no markdown, no code fences, no explanation text.
-- Never fabricate statistics. Use only the data provided in the statistical context.
-- If data quality is critically insufficient, return: {"status":"insufficient_data","message":"Insufficient data."}
+  const keyFactors = Array.isArray(llmParsed.key_factors)
+    ? (llmParsed.key_factors as string[]).filter(Boolean).slice(0, 5)
+    : [];
+  while (keyFactors.length < 5) keyFactors.push('Statistical model consensus applied');
 
-CONFIDENCE: 85-95%=Elite, 75-84%=High, 65-74%=Moderate, 50-64%=Speculative.
-DQ < 30 cap at 55%; < 50 cap at 68%; < 70 cap at 82%.
+  const warningFlags = Array.isArray(llmParsed.warning_flags)
+    ? (llmParsed.warning_flags as string[]).filter(Boolean).slice(0, 3)
+    : [];
+  if (quant.dqScore < 50) warningFlags.push(`Limited data quality (${quant.dqScore}/100)`);
 
-SPORT RULES:
-FOOTBALL/SOCCER: Draw possible. Use Poisson probabilities. Draw_prob reflects Poisson.
-BASKETBALL: NO DRAW. draw_prob=0, ht_draw_prob=0. btts=yes. Use projected totals.
-TENNIS: NO DRAW. draw_prob=0. btts=yes. Use ATP rank + serve engine.
-CRICKET: Draw possible in Tests. O/U in runs.
-BASEBALL/HOCKEY/MMA/BOXING/ESPORTS/VOLLEYBALL/HANDBALL: NO DRAW. draw_prob=0.
-RUGBY: Draws rare (0-3%).
-
-VIP: Always compute value_score(0-100), market_edge_pct(AI win%-implied win%), sharp_signal(bullish/neutral/bearish), suggested_stake(low/medium/high).
-
-PROBABILITY RULES: home_win_prob + draw_prob + away_win_prob = EXACTLY 100. ht_home_prob + ht_draw_prob + ht_away_prob = EXACTLY 100.
-
-OUTPUT — return ONLY this JSON object:
-{"status":"success","home_win_prob":<int>,"draw_prob":<int>,"away_win_prob":<int>,"predicted_result":<"home_win"|"draw"|"away_win">,"confidence":<int 40-95>,"risk_level":<"Low"|"Medium"|"High">,"value_score":<int 0-100>,"market_edge_pct":<int -50 to 50>,"sharp_signal":<"bullish"|"neutral"|"bearish">,"suggested_stake":<"low"|"medium"|"high">,"over_under":<"over"|"under">,"over_under_line":<number>,"predicted_home_goals":<number>,"predicted_away_goals":<number>,"btts":<"yes"|"no">,"correct_score":<string>,"corners_over_under":<"over"|"under">,"corners_line":<number>,"cards_total":<number>,"cards_over_under":<"over"|"under">,"asian_handicap_line":<number>,"asian_handicap_pick":<"home"|"away">,"ht_result":<"home_win"|"draw"|"away_win">,"ht_home_prob":<int>,"ht_draw_prob":<int>,"ht_away_prob":<int>,"clean_sheet_home":<"yes"|"no">,"clean_sheet_away":<"yes"|"no">,"first_goal":<"home"|"away"|"no_goal">,"both_score_ht":<"yes"|"no">,"anytime_scorecast":<string>,"prediction_summary":<string>,"key_alpha_metric":<string>,"ai_analysis":<string 2-3 sentences>,"key_factors":<array of 5 strings>,"warning_flags":<array 0-3 strings>}`;
-}
-
-function buildUserPrompt(match: MatchInput): string {
-  const sport = match.sport?.toLowerCase() ?? 'football';
-  const cfg = getSportConfig(sport);
-  const dq = computeDQScore(match);
-  const hfStr = match.homeForm?.slice(0, 5).join('-') || 'Unknown';
-  const afStr = match.awayForm?.slice(0, 5).join('-') || 'Unknown';
-
-  let liveBlock = '';
-  if (match.status === 'live') {
-    liveBlock = `\nLIVE: ${match.homeScore ?? 0}-${match.awayScore ?? 0} | Min: ${match.minute ?? 0}'`;
-    if (match.stats) {
-      const s = match.stats as Record<string, unknown>;
-      const pos = s.home_possession ?? s.homePossession;
-      const sht = s.home_shots ?? s.homeShots;
-      const sot = s.home_shots_on_target ?? s.homeShotsOnTarget;
-      if (pos) liveBlock += ` | Poss: ${pos}%-${100 - Number(pos)}%`;
-      if (sht) liveBlock += ` | Shots: ${sht}-${s.away_shots ?? s.awayShots ?? '?'}`;
-      if (sot) liveBlock += ` | SOT: ${sot}-${s.away_shots_on_target ?? s.awayShotsOnTarget ?? '?'}`;
-    }
-  }
-
-  let teamNewsBlock = '';
-  if (match.injuries?.length) teamNewsBlock += `\nInjuries: ${match.injuries.join(', ')}`;
-  if (match.suspensions?.length) teamNewsBlock += `\nSuspensions: ${match.suspensions.join(', ')}`;
-
-  const sportRules: Record<string, string> = {
-    football:   `Draw possible. O/U ~${cfg.defaultOULine} goals. Include corners (8.5-11.5) and cards (3-4.5). Anchor to Poisson data.`,
-    soccer:     `Draw possible. O/U ~${cfg.defaultOULine} goals. Include corners (8.5-11.5) and cards (3-4.5). Anchor to Poisson data.`,
-    basketball: `NO DRAW. draw_prob=0, ht_draw_prob=0. btts=yes. O/U ~${cfg.defaultOULine} pts. corners_line=0. Anchor to projected totals.`,
-    tennis:     `NO DRAW. draw_prob=0. btts=yes. O/U ~${cfg.defaultOULine} sets. corners_line=0. Anchor to ATP engine.`,
-    cricket:    `Draw possible in Tests. O/U ~${cfg.defaultOULine} runs. corners_line=0. btts=no.`,
-    baseball:   `NO DRAW. draw_prob=0. O/U ~${cfg.defaultOULine} runs. corners_line=0. ERA/WHIP key.`,
-    hockey:     `NO DRAW. draw_prob=0. O/U ~${cfg.defaultOULine} goals. corners_line=0.`,
-    rugby:      `Draw rare (0-3%). O/U ~${cfg.defaultOULine} pts. corners_line=0.`,
-    mma:        `NO DRAW. draw_prob=0. O/U ~${cfg.defaultOULine} rounds. corners_line=0. btts=no.`,
-    boxing:     `NO DRAW. draw_prob=0. O/U ~${cfg.defaultOULine} rounds. corners_line=0. btts=no.`,
-    handball:   `NO DRAW. draw_prob=0. O/U ~${cfg.defaultOULine} goals. corners_line=0.`,
-    volleyball: `NO DRAW. draw_prob=0. O/U ~${cfg.defaultOULine} sets. corners_line=0. btts=no.`,
-    esports:    `NO DRAW. draw_prob=0, ht_draw_prob=0. O/U ~${cfg.defaultOULine} maps. corners_line=0. btts=no.`,
-    formula1:   `NO DRAW. draw_prob=0. btts=no. corners_line=0. Treat home_team as favourite.`,
+  return {
+    home_win_prob: nHW, draw_prob: nD, away_win_prob: nAW,
+    predicted_result: predictedResult, confidence: llmConf,
+    risk_level: riskLevel, value_score: Math.max(0, Math.min(100, Number(llmParsed.value_score) || 50)),
+    market_edge_pct: Math.max(-40, Math.min(40, Number(llmParsed.market_edge_pct) || 0)),
+    sharp_signal: sharpSignal, suggested_stake: suggestedStake,
+    over_under: overUnder, over_under_line: ouLine,
+    predicted_home_goals: predHG, predicted_away_goals: predAG,
+    btts: String(llmParsed.btts ?? 'no').toLowerCase() === 'yes' ? 'yes' : 'no',
+    correct_score: String(llmParsed.correct_score ?? '1-1'),
+    corners_over_under: String(llmParsed.corners_over_under ?? 'over').toLowerCase() === 'under' ? 'under' : 'over',
+    corners_line: Number(llmParsed.corners_line ?? (sport === 'football' ? 9.5 : 0)),
+    cards_total: Number(llmParsed.cards_total ?? (sport === 'football' ? 3.5 : 0)),
+    cards_over_under: String(llmParsed.cards_over_under ?? 'over').toLowerCase() === 'under' ? 'under' : 'over',
+    asian_handicap_line: Number(llmParsed.asian_handicap_line ?? 0),
+    asian_handicap_pick: String(llmParsed.asian_handicap_pick ?? 'home').toLowerCase() === 'away' ? 'away' : 'home',
+    ht_result: htResult, ht_home_prob: nHH, ht_draw_prob: nHD, ht_away_prob: nHA,
+    clean_sheet_home: String(llmParsed.clean_sheet_home ?? 'no').toLowerCase() === 'yes' ? 'yes' : 'no',
+    clean_sheet_away: String(llmParsed.clean_sheet_away ?? 'no').toLowerCase() === 'yes' ? 'yes' : 'no',
+    first_goal: firstGoal,
+    both_score_ht: String(llmParsed.both_score_ht ?? 'no').toLowerCase() === 'yes' ? 'yes' : 'no',
+    anytime_scorecast: String(llmParsed.anytime_scorecast ?? ''),
+    ai_analysis: String(llmParsed.ai_analysis ?? ''),
+    key_factors: keyFactors, warning_flags: warningFlags,
+    key_alpha_metric: String(llmParsed.key_alpha_metric ?? keyFactors[0] ?? ''),
+    source: 'llm_anchored',
   };
-
-  const statContext = buildStatisticalContext(match);
-
-  return `Generate a ${match.sport.toUpperCase()} prediction for:
-MATCH: ${match.homeTeam} vs ${match.awayTeam}
-League: ${match.league}${match.country ? ` | ${match.country}` : ''}${match.venue ? ` | ${match.venue}` : ''}
-Status: ${match.status ?? 'upcoming'} | Form: ${match.homeTeam} ${hfStr} | ${match.awayTeam} ${afStr}${teamNewsBlock}${liveBlock}
-DQ Score: ${dq}/100${dq < 50 ? ' - LOW QUALITY: cap confidence at 68%' : dq >= 75 ? ' - GOOD' : ''}
-
-${statContext}
-
-RULES: ${sportRules[sport] ?? sportRules['football']}
-Return ONLY the JSON. Anchor probabilities to statistical context (max ±8% deviation).`;
 }
 
-// ─── Fetch with retry helper ──────────────────────────────────────────────────
-async function tryFetch(
-  url: string,
-  options: RequestInit,
-  timeoutMs = 28_000,
-): Promise<{ ok: boolean; status: number; json: () => Promise<unknown> } | null> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(timer);
-    return { ok: res.ok, status: res.status, json: () => res.json() };
-  } catch {
-    return null;
-  }
-}
-
-// ─── Main handler ─────────────────────────────────────────────────────────────
+// ─── Deno handler ─────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: secureHeaders });
-  }
+  if (req.method === 'OPTIONS') return handleCorsOptions(req, false);
 
   try {
     const { guard, body: parsedBody } = await applySecurityMiddleware(req, {
-      rateLimit: { max: 10, windowSec: 60, blockSec: 120 },
-      maxPayloadBytes: 64_000,
+      rateLimit: { max: 12, windowSec: 60, blockSec: 120 },
+      maxPayloadBytes: 80_000,
       rateLimitScope: 'predict',
       blockBotUa: true,
       sanitizeInput: false,
@@ -415,253 +255,211 @@ Deno.serve(async (req: Request) => {
     });
     if (guard) return guard;
 
-    let match: MatchInput;
-    let userId: string | null = null;
+    const body = parsedBody as Record<string, unknown>;
+    if (!body) return secureErrorResponse('Empty body', 400);
 
-    try {
-      const body = parsedBody as Record<string, unknown>;
-      if (!body) throw new Error('Empty body');
-      match = body.match as MatchInput;
-      userId = (body.user_id as string) ?? null;
-    } catch {
-      return secureErrorResponse('Invalid request body', 400);
-    }
+    const match = body.match as MatchFeatures;
+    const userId = (body.user_id as string) ?? null;
+    const bypassCache = Boolean(body.bypass_cache ?? false);
 
     if (userId) {
-      const userGuard = applyUserRateLimit(userId, 'predict', { max: 5, windowSec: 60, blockSec: 120 });
+      const userGuard = applyUserRateLimit(userId, 'predict', { max: 6, windowSec: 60, blockSec: 120 });
       if (userGuard) return userGuard;
     }
 
-    if (!match?.id || !match?.homeTeam || !match?.awayTeam) {
-      return secureErrorResponse('match.id, homeTeam, awayTeam required', 400);
+    if (!match?.sport || !match?.homeTeam || !match?.awayTeam) {
+      return secureErrorResponse('match.sport, homeTeam, awayTeam required', 400);
     }
 
-    const openaiKey = Deno.env.get('OPENAI_API_KEY');
-    const groqKey   = Deno.env.get('Groq_API_Key');
-    const geminiKey = Deno.env.get('Gemini_API_Key');
-    const aiKey     = Deno.env.get('ONSPACE_AI_API_KEY');
-    const aiBase    = Deno.env.get('ONSPACE_AI_BASE_URL');
+    const sport = (match.sport ?? 'football').toLowerCase();
 
-    if (!openaiKey && !groqKey && !geminiKey && !aiKey) {
-      return secureErrorResponse('No AI provider keys configured', 500);
-    }
-
-    const requestPayload = {
-      messages: [
-        { role: 'system', content: buildSystemPrompt() },
-        { role: 'user',   content: buildUserPrompt(match) },
-      ],
-      temperature: 0.55,
-      max_tokens: 1400,
-    };
-
-    let rawContent = '';
-    let usedProvider = 'none';
-
-    // ── Provider 1: OpenAI GPT-4.1 → GPT-4.1-mini ───────────────────────────
-    if (openaiKey) {
-      for (const model of [OPENAI_MODEL, OPENAI_MODEL_MINI]) {
-        const res = await tryFetch(`${OPENAI_BASE}/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-          body: JSON.stringify({ ...requestPayload, model }),
-        });
-        if (res?.ok) {
-          const data = await res.json() as Record<string, unknown>;
-          const c = ((data.choices as any[])?.[0]?.message?.content ?? '') as string;
-          if (c.length > 20) { rawContent = c; usedProvider = `openai-${model}`; break; }
-        } else if (res && res.status !== 429 && res.status !== 503 && res.status !== 529) {
-          break; // Non-retryable error — skip to next provider
-        }
-        // 429/503/529 = rate limited/overloaded — continue to try mini then fallback
-      }
-    }
-
-    // ── Provider 2: Groq (multiple model fallback chain) ─────────────────────
-    if (!rawContent && groqKey) {
-      for (const model of GROQ_MODELS) {
-        const res = await tryFetch(`${GROQ_BASE}/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
-          body: JSON.stringify({ ...requestPayload, model, response_format: { type: 'json_object' } }),
-        });
-        if (res?.ok) {
-          const data = await res.json() as Record<string, unknown>;
-          const c = ((data.choices as any[])?.[0]?.message?.content ?? '') as string;
-          if (c.length > 20) { rawContent = c; usedProvider = `groq-${model}`; break; }
-        } else if (res?.status === 404 || res?.status === 400) {
-          continue; // Model not found, try next
-        } else {
-          break; // Other error
-        }
-      }
-    }
-
-    // ── Provider 3: Gemini (multiple model fallback chain) ────────────────────
-    if (!rawContent && geminiKey) {
-      for (const model of GEMINI_MODELS) {
-        const res = await tryFetch(`${GEMINI_BASE}/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${geminiKey}` },
-          body: JSON.stringify({ ...requestPayload, model, response_format: { type: 'json_object' } }),
-        });
-        if (res?.ok) {
-          const data = await res.json() as Record<string, unknown>;
-          const c = ((data.choices as any[])?.[0]?.message?.content ?? '') as string;
-          if (c.length > 20) { rawContent = c; usedProvider = `gemini-${model}`; break; }
-        } else if (res?.status === 404 || res?.status === 400) {
-          continue;
-        } else {
-          break;
-        }
-      }
-    }
-
-    // ── Provider 4: OnSpace AI fallback ──────────────────────────────────────
-    if (!rawContent && aiKey && aiBase) {
-      const res = await tryFetch(`${aiBase}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiKey}` },
-        body: JSON.stringify({ ...requestPayload, model: ONSPACE_MODEL }),
-      });
-      if (res?.ok) {
-        const data = await res.json() as Record<string, unknown>;
-        const c = ((data.choices as any[])?.[0]?.message?.content ?? '') as string;
-        if (c.length > 20) { rawContent = c; usedProvider = 'onspace-ai'; }
-      }
-    }
-
-    if (!rawContent) {
-      console.error(`[generate-prediction] All providers failed for match ${match.id} | openai=${!!openaiKey} groq=${!!groqKey} gemini=${!!geminiKey} onspace=${!!aiKey}`);
-      return secureErrorResponse('All AI providers failed', 502);
-    }
-
-    // ── Parse JSON ────────────────────────────────────────────────────────────
-    let parsed: Record<string, unknown>;
-    try {
-      const cleaned = rawContent.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      const m = rawContent.match(/\{[\s\S]*\}/);
-      if (m) {
-        try { parsed = JSON.parse(m[0]); }
-        catch { return secureErrorResponse('AI returned invalid JSON', 502); }
-      } else {
-        return secureErrorResponse('AI returned no JSON', 502);
-      }
-    }
-
-    if (parsed.status === 'insufficient_data') {
-      return secureResponse({ success: false, insufficient_data: true, message: parsed.message ?? 'Insufficient data' });
-    }
-
-    // ── Normalise probabilities ───────────────────────────────────────────────
-    const [nH, nD, nA] = normProbs(
-      Math.max(0, Number(parsed.home_win_prob) || 0),
-      Math.max(0, Number(parsed.draw_prob) || 0),
-      Math.max(0, Number(parsed.away_win_prob) || 0),
-    );
-    const [nHH, nHD, nHA] = normProbs(
-      Math.max(0, Number(parsed.ht_home_prob) || 35),
-      Math.max(0, Number(parsed.ht_draw_prob) || 40),
-      Math.max(0, Number(parsed.ht_away_prob) || 25),
-    );
-
-    const RESULTS = ['home_win', 'draw', 'away_win'] as const;
-    const rawResult = String(parsed.predicted_result ?? '');
-    const predictedResult = RESULTS.includes(rawResult as typeof RESULTS[number])
-      ? (rawResult as typeof RESULTS[number])
-      : (nH >= nA ? 'home_win' : 'away_win');
-
-    const rawHtResult = String(parsed.ht_result ?? '');
-    const htResult = RESULTS.includes(rawHtResult as typeof RESULTS[number])
-      ? (rawHtResult as typeof RESULTS[number]) : 'draw';
-
-    const overUnder   = String(parsed.over_under ?? 'over').toLowerCase() === 'under' ? 'under' : 'over';
-    const cardsOU     = String(parsed.cards_over_under ?? 'over').toLowerCase() === 'under' ? 'under' : 'over';
-    const cornersOU   = String(parsed.corners_over_under ?? 'over').toLowerCase() === 'under' ? 'under' : 'over';
-    const rawFG       = String(parsed.first_goal ?? 'home').toLowerCase();
-    const firstGoal   = ['home','away','no_goal'].includes(rawFG) ? rawFG : 'home';
-    const ahPick      = String(parsed.asian_handicap_pick ?? 'home').toLowerCase() === 'away' ? 'away' : 'home';
-    const rawSignal   = String(parsed.sharp_signal ?? 'neutral').toLowerCase();
-    const sharpSignal = ['bullish','neutral','bearish'].includes(rawSignal) ? rawSignal : 'neutral';
-    const rawRisk     = String(parsed.risk_level ?? '');
-    const riskLevel   = ['Low','Medium','High'].includes(rawRisk) ? rawRisk
-      : (Number(parsed.confidence) >= 80 ? 'Low' : Number(parsed.confidence) >= 60 ? 'Medium' : 'High');
-    const rawStake    = String(parsed.suggested_stake ?? '').toLowerCase();
-    const suggestedStake = ['low','medium','high'].includes(rawStake) ? rawStake : 'medium';
-
-    const confidence    = Math.max(40, Math.min(95, Number(parsed.confidence) || 65));
-    const valueScore    = Math.max(0, Math.min(100, Number(parsed.value_score) || 50));
-    const marketEdgePct = Math.max(-50, Math.min(50, Number(parsed.market_edge_pct) || 0));
-
-    const keyFactors = Array.isArray(parsed.key_factors)
-      ? (parsed.key_factors as string[]).filter((f) => typeof f === 'string').slice(0, 5)
-      : [];
-    while (keyFactors.length < 5) keyFactors.push('Statistical model applied');
-
-    const warningFlags = Array.isArray(parsed.warning_flags)
-      ? (parsed.warning_flags as string[]).filter((f) => typeof f === 'string').slice(0, 3)
-      : [];
-
-    const predHG = Number(parsed.predicted_home_goals ?? 1.5);
-    const predAG = Number(parsed.predicted_away_goals ?? 1.2);
-    const ouLine = Number(parsed.over_under_line ?? getSportConfig(match.sport ?? '').defaultOULine);
-    const resolvedOU = (predHG + predAG) > ouLine ? 'over' : 'under';
-
-    // ── Apply data-quality confidence ceiling ─────────────────────────────────
-    const dq = computeDQScore(match);
-    let finalConf = confidence;
-    if (dq < 30) finalConf = Math.min(finalConf, 55);
-    else if (dq < 50) finalConf = Math.min(finalConf, 68);
-    else if (dq < 70) finalConf = Math.min(finalConf, 82);
-    if (dq < 50 && !warningFlags.find((w) => w.toLowerCase().includes('data'))) {
-      warningFlags.push(`Limited data quality (score ${dq}/100)`);
-    }
-
-    // ── Persist ───────────────────────────────────────────────────────────────
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
 
-    const predVersion = usedProvider.includes('gpt-4.1') && !usedProvider.includes('mini') ? 5
-      : usedProvider.includes('openai') ? 4
-      : usedProvider.includes('groq') ? 4
-      : usedProvider.includes('gemini') ? 4 : 3;
+    // ── Idempotency: check for recent prediction ──────────────────────────────
+    if (!bypassCache && match.id) {
+      const since = new Date(Date.now() - 4 * 3600_000).toISOString();
+      const { data: existing } = await supabase
+        .from('predictions')
+        .select('id, confidence, prediction_version')
+        .eq('match_id', match.id)
+        .gte('created_at', since)
+        .order('prediction_version', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
+      if (existing) {
+        console.log(`[generate-prediction] Cache hit for match=${match.id} pred=${existing.id}`);
+        return secureResponse({ success: true, prediction: existing, cached: true });
+      }
+    }
+
+    // ── Step 1: Quantitative model (always runs) ──────────────────────────────
+    const quantOutput = runQuantitativeModel(match);
+    console.log(`[generate-prediction] Quant model: ${sport} DQ=${quantOutput.dqScore} conf=${quantOutput.confidence} method=${quantOutput.modelMethod}`);
+
+    // ── Step 2: Determine AI routing strategy ─────────────────────────────────
+    const highValue = isHighValueLeague(match.league ?? '');
+    const strategy = selectRoutingStrategy({
+      sport,
+      dqScore: quantOutput.dqScore,
+      league: match.league,
+      isHighValue: highValue,
+      isLive: match.status === 'live',
+    });
+
+    // ── Step 3: Call AI provider(s) ───────────────────────────────────────────
+    let aiResult: AICallResult | null = null;
+    let aiResults: AICallResult[] = [];
+    let providerCode = 'quantitative_only';
+    let usedStrategy: RoutingStrategy = strategy;
+
+    const systemPrompt = buildSystemPrompt(sport);
+    const userPrompt = buildUserPrompt(match, quantOutput);
+    const aiOptions = { messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], temperature: 0.5, maxTokens: 1400, requireJsonObject: true };
+
+    if (strategy === 'consensus_two') {
+      const consensusResult = await routeConsensusCall('consensus_two', aiOptions);
+      aiResults = consensusResult.results;
+      aiResult = aiResults[0] ?? null;
+      providerCode = `consensus:${consensusResult.providersSucceeded.join('+')}`;
+    } else if (strategy !== 'primary_only') {
+      aiResult = await routeAICall(strategy, aiOptions);
+      if (aiResult) providerCode = `${aiResult.provider}/${aiResult.model}`;
+      else providerCode = 'quantitative_only';
+    }
+
+    // ── Step 4: Parse and merge outputs ──────────────────────────────────────
+    let llmParsed: Record<string, unknown> | null = null;
+    if (aiResult) {
+      llmParsed = parseAndValidatePredictionJSON(aiResult.content);
+      if (!llmParsed) {
+        console.warn(`[generate-prediction] LLM JSON parse failed, falling back to quant-only`);
+        providerCode = 'quantitative_fallback';
+      }
+    }
+
+    // For consensus: try to merge multiple LLM outputs
+    if (aiResults.length > 1) {
+      const parsedResults = aiResults.map((r) => parseAndValidatePredictionJSON(r.content)).filter(Boolean) as Record<string, unknown>[];
+      if (parsedResults.length > 0) {
+        // Average the probabilities across valid LLM results
+        const avgHW = Math.round(parsedResults.reduce((s, r) => s + Number(r.home_win_prob ?? 0), 0) / parsedResults.length);
+        const avgD = Math.round(parsedResults.reduce((s, r) => s + Number(r.draw_prob ?? 0), 0) / parsedResults.length);
+        const avgAW = Math.round(parsedResults.reduce((s, r) => s + Number(r.away_win_prob ?? 0), 0) / parsedResults.length);
+        const avgConf = Math.round(parsedResults.reduce((s, r) => s + Number(r.confidence ?? 0), 0) / parsedResults.length);
+        // Use first result as template and override probabilities with average
+        llmParsed = { ...parsedResults[0], home_win_prob: avgHW, draw_prob: avgD, away_win_prob: avgAW, confidence: avgConf };
+      }
+    }
+
+    const merged = mergeOutputs(quantOutput, llmParsed, sport);
+
+    // ── Step 5: Quality gate ──────────────────────────────────────────────────
+    const forGate: PredictionForGate = {
+      match_id: match.id ?? 'unknown',
+      home_win_prob: merged.home_win_prob as number,
+      draw_prob: merged.draw_prob as number,
+      away_win_prob: merged.away_win_prob as number,
+      predicted_result: merged.predicted_result as string,
+      confidence: merged.confidence as number,
+      over_under: merged.over_under as string,
+      over_under_line: merged.over_under_line as number,
+      btts: merged.btts as string,
+      ai_analysis: merged.ai_analysis as string,
+      key_factors: merged.key_factors as string[],
+      predicted_home_goals: merged.predicted_home_goals as number,
+      predicted_away_goals: merged.predicted_away_goals as number,
+      correct_score: merged.correct_score as string,
+      risk_level: merged.risk_level as string,
+      value_score: merged.value_score as number,
+      market_edge_pct: merged.market_edge_pct as number,
+      warning_flags: merged.warning_flags as string[],
+      match_sport: sport,
+      home_team: match.homeTeam,
+      away_team: match.awayTeam,
+      match_status: match.status ?? 'upcoming',
+      enrichment_pct: quantOutput.dqScore,
+    };
+
+    const gateResult = runQualityGate(forGate, { strictMode: false, minApprovalScore: 45 });
+
+    if (!gateResult.approved) {
+      console.warn(`[generate-prediction] Quality gate REJECTED: ${gateResult.rejectionReason} score=${gateResult.overallScore}`);
+      return secureResponse({
+        success: false,
+        rejected: true,
+        rejectionReason: gateResult.rejectionReason,
+        qualityScore: gateResult.overallScore,
+      });
+    }
+
+    // ── Step 6: Determine prediction version ─────────────────────────────────
+    const predVersion = strategy === 'consensus_two' ? 12
+      : strategy === 'consensus_three' ? 13
+      : providerCode.includes('openai') ? 10
+      : providerCode.includes('gemini') ? 9
+      : providerCode.includes('groq') ? 9
+      : 8; // quantitative only
+
+    // ── Step 7: Persist ───────────────────────────────────────────────────────
     const row = {
-      match_id: match.id, user_id: userId,
-      home_win_prob: nH, draw_prob: nD, away_win_prob: nA,
-      predicted_result: predictedResult, confidence: finalConf,
-      over_under: resolvedOU, over_under_line: ouLine,
-      predicted_home_goals: predHG, predicted_away_goals: predAG,
-      btts: String(parsed.btts ?? 'no'),
-      correct_score: String(parsed.correct_score ?? '1-1'),
-      corners_over_under: cornersOU, corners_line: Number(parsed.corners_line ?? 9.5),
-      cards_total: Number(parsed.cards_total ?? 3.5), cards_over_under: cardsOU,
-      asian_handicap_line: Number(parsed.asian_handicap_line ?? 0), asian_handicap_pick: ahPick,
-      ht_result: htResult, ht_home_prob: nHH, ht_draw_prob: nHD, ht_away_prob: nHA,
-      clean_sheet_home: String(parsed.clean_sheet_home ?? 'no'),
-      clean_sheet_away: String(parsed.clean_sheet_away ?? 'no'),
-      first_goal: firstGoal, both_score_ht: String(parsed.both_score_ht ?? 'no'),
-      anytime_scorecast: String(parsed.anytime_scorecast ?? ''),
-      ai_analysis: String(parsed.ai_analysis ?? ''),
-      key_factors: keyFactors, risk_level: riskLevel,
-      value_score: valueScore, market_edge_pct: marketEdgePct,
-      sharp_signal: sharpSignal, suggested_stake: suggestedStake,
-      warning_flags: warningFlags, key_alpha_metric: String(parsed.key_alpha_metric ?? keyFactors[0]),
+      match_id: match.id ?? null,
+      user_id: userId,
+      ...merged,
+      quality_gate_score: gateResult.overallScore,
+      enrichment_pct: quantOutput.dqScore,
       prediction_version: predVersion,
     };
 
     const { data: saved, error: dbErr } = await supabase
-      .from('predictions').insert(row).select().single();
+      .from('predictions')
+      .insert(row)
+      .select()
+      .single();
+
+    // Audit log (non-blocking)
+    supabase.from('ai_audit_logs').insert({
+      match_id: match.id ?? null,
+      user_id: userId,
+      provider_code: providerCode,
+      function_name: 'generate-prediction-v6',
+      prompt_version: 4,
+      prediction_version: predVersion,
+      facts_object: { dqScore: quantOutput.dqScore, method: quantOutput.modelMethod },
+      pre_validation_passed: quantOutput.dqScore >= 30,
+      post_validation_passed: gateResult.approved,
+      hallucination_score: gateResult.hallucinationScore,
+      consensus_passed: true,
+      approval_status: 'approved',
+      dq_score: quantOutput.dqScore,
+      confidence_output: merged.confidence as number,
+      risk_level: merged.risk_level as string,
+      latency_ms: aiResult?.latencyMs ?? null,
+      warning_flags: merged.warning_flags as string[],
+      rejection_reason: null,
+      enrichment_pct: quantOutput.dqScore,
+    }).then(() => {}).catch(() => {});
 
     if (dbErr) {
-      return secureResponse({ success: true, prediction: row, db_warning: 'Save skipped (duplicate or DB error)' });
+      console.warn(`[generate-prediction] DB insert warning: ${dbErr.message}`);
+      return secureResponse({ success: true, prediction: row, db_warning: dbErr.message });
     }
 
-    return secureResponse({ success: true, prediction: saved });
+    return secureResponse({
+      success: true,
+      prediction: saved,
+      meta: {
+        provider: providerCode,
+        strategy: usedStrategy,
+        quantMethod: quantOutput.modelMethod,
+        dqScore: quantOutput.dqScore,
+        qualityGateScore: gateResult.overallScore,
+        circuitHealth: getProviderCircuitHealth(),
+      },
+    });
 
   } catch (err) {
     console.error('[generate-prediction] fatal:', err instanceof Error ? err.message : String(err));
