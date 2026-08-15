@@ -5,12 +5,11 @@
  * simultaneously, aggregates with weighted consensus voting, and persists
  * results to the `predictions` table + `ai_audit_logs`.
  *
- * Provider Fan-out:
- *   ① GPT-4.1            — primary intelligence       (OpenAI)
- *   ② GPT-4o-mini        — verification layer         (OpenAI, lightweight)
- *   ③ Gemini 2.0 Flash   — multimodal pattern analysis(Google)
- *   ④ Llama 3.1 70B      — quantitative analysis      (Groq)
- *   ⑤ Claude 3.5 Haiku   — reasoning / calibration    (Anthropic)
+ * Provider Fan-out (v2 — 2026):
+ *   ① GPT-5.5            — primary intelligence       (OpenAI)
+ *   ② Claude             — reasoning / calibration    (Anthropic, native Messages API)
+ *   ③ Gemini 2.5 Flash   — multimodal pattern analysis(Google)
+ *   ④ Llama 4 / 3.3 70B  — quantitative analysis      (Meta via Groq)
  *
  * Consensus Algorithm:
  *   - Each model votes on: predicted_result, over_under, btts
@@ -52,13 +51,33 @@ interface ModelSpec {
   maxTokens: number;
 }
 
+// Model specs — primary model per provider with intra-provider fallbacks
 const ALL_MODEL_SPECS: ModelSpec[] = [
-  { id: 'gpt41',    provider: 'openai',    model: 'gpt-4.1',                  defaultWeight: 1.00, temperature: 0.50, maxTokens: 1600 },
-  { id: 'gpt4mini', provider: 'openai',    model: 'gpt-4o-mini',               defaultWeight: 0.70, temperature: 0.45, maxTokens: 1200 },
-  { id: 'gemini',   provider: 'gemini',    model: 'gemini-2.0-flash',           defaultWeight: 0.90, temperature: 0.55, maxTokens: 1500 },
-  { id: 'llama',    provider: 'groq',      model: 'llama-3.1-70b-versatile',   defaultWeight: 0.80, temperature: 0.50, maxTokens: 1400 },
-  { id: 'claude',   provider: 'anthropic', model: 'claude-3-5-haiku-20241022', defaultWeight: 0.95, temperature: 0.50, maxTokens: 1400 },
+  // OpenAI: GPT-5.5 primary; gpt-4.1 is the fallback within OpenAI
+  { id: 'gpt55',  provider: 'openai',    model: 'gpt-5.5',                                    defaultWeight: 1.00, temperature: 0.50, maxTokens: 1600 },
+  // Anthropic Claude — dispatched via native Messages API
+  { id: 'claude', provider: 'anthropic', model: 'claude-opus-4-5',                             defaultWeight: 0.97, temperature: 0.50, maxTokens: 1400 },
+  // Google Gemini — OpenAI-compatible endpoint
+  { id: 'gemini', provider: 'gemini',    model: 'gemini-2.5-flash',                            defaultWeight: 0.90, temperature: 0.55, maxTokens: 1500 },
+  // Meta Llama via Groq — OpenAI-compatible, fastest provider
+  { id: 'llama',  provider: 'groq',      model: 'meta-llama/llama-4-scout-17b-16e-instruct',   defaultWeight: 0.82, temperature: 0.50, maxTokens: 1400 },
 ];
+
+// Intra-provider fallback chains (tried in order when primary returns non-2xx)
+const MODEL_FALLBACKS: Record<string, string[]> = {
+  gpt55:  ['gpt-4.1'],
+  claude: ['claude-sonnet-4-5', 'claude-3-5-sonnet-20241022'],
+  gemini: ['gemini-2.0-flash'],
+  llama:  ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile'],
+};
+
+// Model role descriptors injected into each provider's user prompt
+const MODEL_ROLES: Record<string, string> = {
+  gpt55:  'Your role: PRIMARY INTELLIGENCE (GPT-5.5). Produce the most analytically complete prediction.',
+  claude: 'Your role: REASONING & CALIBRATION (Claude). Apply rigorous Bayesian reasoning anchored strictly in the supplied facts.',
+  gemini: 'Your role: PATTERN ANALYSIS (Gemini). Identify tactical, historical, and contextual patterns from the provided verified facts.',
+  llama:  'Your role: QUANTITATIVE ANALYSIS (Llama). Focus on numerical evidence and statistical validation of the supplied data.',
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface MatchInput {
@@ -400,7 +419,7 @@ function parseModelOutput(
   };
 }
 
-// ─── Call OpenAI-compatible providers (OpenAI, Groq, Gemini) ─────────────────
+// ─── Call OpenAI-compatible providers (OpenAI, Groq/Llama, Gemini) ───────────
 async function callOpenAICompatible(
   spec: ModelSpec,
   match: MatchInput,
@@ -408,41 +427,58 @@ async function callOpenAICompatible(
   apiKey: string,
   baseURL: string,
 ): Promise<ModelPrediction | null> {
-  const roleMap: Record<string, string> = {
-    gpt41:    'Your role: PRIMARY INTELLIGENCE. Produce the most complete and analytically deep prediction.',
-    gpt4mini: 'Your role: VERIFICATION LAYER. Cross-check the statistical evidence and flag any inconsistencies.',
-    gemini:   'Your role: PATTERN ANALYSIS. Identify tactical and historical patterns from the provided facts.',
-    llama:    'Your role: QUANTITATIVE ANALYSIS. Focus on numerical evidence and probability calibration.',
-    claude:   'Your role: REASONING & CALIBRATION. Apply rigorous probabilistic reasoning anchored in the supplied facts.',
-  };
   const startMs = Date.now();
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    const res = await fetch(`${baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: spec.model,
+  const roleDescriptor = MODEL_ROLES[spec.id] ?? 'Your role: ANALYSIS. Produce a statistical prediction anchored in the supplied facts.';
+  const modelsToTry = [spec.model, ...(MODEL_FALLBACKS[spec.id] ?? []).filter((m) => m !== spec.model)];
+
+  for (const model of modelsToTry) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+      const requestBody: Record<string, unknown> = {
+        model,
         messages: [
           { role: 'system', content: buildSystemPrompt() },
-          { role: 'user', content: buildUserPrompt(match, roleMap[spec.id] ?? '') },
+          { role: 'user', content: buildUserPrompt(match, roleDescriptor) },
         ],
         temperature: spec.temperature,
         max_tokens: spec.maxTokens,
-        response_format: { type: 'json_object' },
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const raw = data.choices?.[0]?.message?.content ?? '';
-    return parseModelOutput(raw, spec, weight, startMs, match);
-  } catch { return null; }
+      };
+      // Groq Llama may not support json_object response_format on all model versions
+      if (spec.provider !== 'groq') {
+        requestBody.response_format = { type: 'json_object' };
+      }
+
+      const res = await fetch(`${baseURL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const status = res.status;
+        if (status === 429 || status >= 500) {
+          console.warn(`[multi-model] ${spec.provider}/${model} returned ${status} — trying fallback`);
+          continue;
+        }
+        return null; // 4xx config error — don't retry
+      }
+
+      const data = await res.json();
+      const raw = data.choices?.[0]?.message?.content ?? '';
+      const result = parseModelOutput(raw, { ...spec, model }, weight, startMs, match);
+      if (result) return result;
+    } catch (err) {
+      console.warn(`[multi-model] ${spec.provider}/${model} threw:`, err instanceof Error ? err.message.slice(0, 80) : String(err));
+    }
+  }
+  return null;
 }
 
-// ─── Call Anthropic Claude (native Messages API) ──────────────────────────────
+// ─── Call Anthropic Claude (native Messages API with intra-provider fallback) ─
 async function callClaude(
   spec: ModelSpec,
   match: MatchInput,
@@ -450,35 +486,51 @@ async function callClaude(
   apiKey: string,
 ): Promise<ModelPrediction | null> {
   const startMs = Date.now();
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    const sysPrompt = buildSystemPrompt();
-    const userPrompt = buildUserPrompt(match, 'Your role: REASONING & CALIBRATION. Apply rigorous probabilistic reasoning anchored in the supplied facts.');
+  const sysPrompt  = buildSystemPrompt();
+  const userPrompt = buildUserPrompt(match, MODEL_ROLES['claude'] ?? 'Reasoning & calibration.');
+  const modelsToTry = [spec.model, ...(MODEL_FALLBACKS[spec.id] ?? []).filter((m) => m !== spec.model)];
 
-    const res = await fetch(`${ANTHROPIC_BASE}/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: spec.model,
-        max_tokens: spec.maxTokens,
-        temperature: spec.temperature,
-        system: sysPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const data = await res.json();
-    // Anthropic response: data.content[0].text
-    const raw = data.content?.[0]?.text ?? '';
-    return parseModelOutput(raw, spec, weight, startMs, match);
-  } catch { return null; }
+  for (const model of modelsToTry) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+      const res = await fetch(`${ANTHROPIC_BASE}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: spec.maxTokens,
+          temperature: spec.temperature,
+          system: sysPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const status = res.status;
+        if (status === 429 || status >= 500) {
+          console.warn(`[multi-model] anthropic/${model} returned ${status} — trying fallback`);
+          continue;
+        }
+        return null;
+      }
+
+      const data = await res.json();
+      const raw = data.content?.[0]?.text ?? '';
+      const result = parseModelOutput(raw, { ...spec, model }, weight, startMs, match);
+      if (result) return result;
+    } catch (err) {
+      console.warn(`[multi-model] anthropic/${model} threw:`, err instanceof Error ? err.message.slice(0, 80) : String(err));
+    }
+  }
+  return null;
 }
 
 // ─── Dispatch to correct provider ────────────────────────────────────────────
@@ -658,7 +710,7 @@ Deno.serve(async (req: Request) => {
 
     const apiKeys = {
       openai:    Deno.env.get('OPENAI_API_KEY'),
-      groq:      Deno.env.get('Groq_API_Key'),
+      groq:      Deno.env.get('Groq_API') ?? Deno.env.get('Groq_API_Key'),
       gemini:    Deno.env.get('Gemini_API_Key'),
       anthropic: Deno.env.get('ANTHROPIC_API_KEY'),
     };
@@ -731,7 +783,7 @@ Deno.serve(async (req: Request) => {
       supabase.from('predictions').insert(predRow).select().single(),
       supabase.from('ai_audit_logs').insert({
         match_id: match.id, user_id: userId,
-        provider_code: 'multi-model-consensus-v5',
+        provider_code: 'multi-model-consensus-v6',
         function_name: 'multi-model-prediction',
         prompt_version: 3,
         prediction_version: consensus.predictionVersion,

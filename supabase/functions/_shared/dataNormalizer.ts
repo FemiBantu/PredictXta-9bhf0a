@@ -182,9 +182,11 @@ const VALID_PREFIXES: Record<string, string[]> = {
   'american-football': ['american-football'],           // hyphenated — needs startsWith
   cricket:             ['cricket'],
   mma:                 ['mma', 'mma-api'],
-  // formula1 — F1 grand prix events only (filtered via isF1 regex in fetchFormula1)
+  // Boxing: 'boxing-api-{id}' (API-Sports) and 'boxing-tsdb-{id}' (TheSportsDB)
   boxing:              ['boxing'],
+  // Esports: 'esports-{id}' (API-Sports) and 'esports-tsdb-{id}' (TheSportsDB)
   esports:             ['esports'],
+  // formula1 — F1 grand prix events only (filtered via isF1 regex in fetchFormula1)
 };
 
 /**

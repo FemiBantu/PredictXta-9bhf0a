@@ -1,11 +1,14 @@
 /**
  * supabase/functions/_shared/aiProviderRouter.ts
  *
- * Unified AI Provider Router v1.0
+ * Unified AI Provider Router v2.0
  *
  * Architecture:
  *   All AI prediction calls go through this router.
- *   Primary: OpenAI → Fallback: Gemini → Fallback: Groq
+ *   Primary:   OpenAI (GPT-5.5)
+ *   Secondary: Anthropic (Claude)
+ *   Tertiary:  Google (Gemini)
+ *   Fallback:  Meta Llama (via Groq)
  *
  * Features:
  *   - Circuit breaker per provider (auto-disables after N failures)
@@ -15,17 +18,19 @@
  *   - Schema validation on every response
  *   - Cost-optimized routing (low-value → single LLM, high-value → consensus)
  *   - Zero provider secrets exposed to client
+ *   - Claude via native Anthropic Messages API (not OpenAI-compat)
  */
 
 // ─── Provider registry ────────────────────────────────────────────────────────
-export type AIProvider = 'openai' | 'gemini' | 'groq';
+export type AIProvider = 'openai' | 'anthropic' | 'gemini' | 'groq';
 export type RoutingStrategy =
-  | 'primary_only'        // quantitative model only, no LLM
-  | 'single_fast'         // Groq for low-latency single call
-  | 'single_primary'      // OpenAI primary, no fallback
-  | 'primary_with_fallback' // OpenAI → Gemini → Groq
-  | 'consensus_two'       // OpenAI + Gemini
-  | 'consensus_three';    // OpenAI + Gemini + Groq (full consensus)
+  | 'primary_only'          // quantitative model only, no LLM
+  | 'single_fast'           // Groq/Llama for low-latency single call
+  | 'single_primary'        // OpenAI only, no fallback
+  | 'primary_with_fallback' // OpenAI → Anthropic → Gemini → Groq
+  | 'consensus_two'         // OpenAI + Anthropic
+  | 'consensus_three'       // OpenAI + Anthropic + Gemini
+  | 'consensus_four';       // OpenAI + Anthropic + Gemini + Groq (full consensus)
 
 export interface ProviderConfig {
   provider: AIProvider;
@@ -45,45 +50,62 @@ export interface ProviderHealth {
 
 // In-memory circuit breaker state (persists across requests within same isolate)
 const CIRCUIT_STATE: Record<AIProvider, ProviderHealth> = {
-  openai: { provider: 'openai', consecutiveFailures: 0, lastFailureMs: 0, circuitOpen: false, cooldownMs: 120_000 },
-  gemini: { provider: 'gemini', consecutiveFailures: 0, lastFailureMs: 0, circuitOpen: false, cooldownMs: 120_000 },
-  groq:   { provider: 'groq',   consecutiveFailures: 0, lastFailureMs: 0, circuitOpen: false, cooldownMs: 60_000 },
+  openai:    { provider: 'openai',    consecutiveFailures: 0, lastFailureMs: 0, circuitOpen: false, cooldownMs: 120_000 },
+  anthropic: { provider: 'anthropic', consecutiveFailures: 0, lastFailureMs: 0, circuitOpen: false, cooldownMs: 120_000 },
+  gemini:    { provider: 'gemini',    consecutiveFailures: 0, lastFailureMs: 0, circuitOpen: false, cooldownMs: 120_000 },
+  groq:      { provider: 'groq',      consecutiveFailures: 0, lastFailureMs: 0, circuitOpen: false, cooldownMs: 60_000 },
 };
 
 const CIRCUIT_OPEN_THRESHOLD = 3; // failures before circuit opens
 
+// Anthropic native Messages API — not OpenAI-compatible
+const ANTHROPIC_API_BASE = 'https://api.anthropic.com/v1';
+const ANTHROPIC_API_VERSION = '2023-06-01';
+
 export const PROVIDER_CONFIGS: Record<AIProvider, ProviderConfig> = {
   openai: {
     provider: 'openai',
+    // GPT-5.5 is the primary model; gpt-4.1 is the fallback within the provider
     baseURL: 'https://api.openai.com/v1',
-    models: ['gpt-4.1', 'gpt-4.1-mini'],
+    models: ['gpt-5.5', 'gpt-4.1'],
+    timeoutMs: 30_000,
+    maxRetries: 1,
+  },
+  anthropic: {
+    provider: 'anthropic',
+    // Claude uses native Messages API — baseURL is used for health check only
+    baseURL: ANTHROPIC_API_BASE,
+    models: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022'],
     timeoutMs: 28_000,
     maxRetries: 1,
   },
   gemini: {
     provider: 'gemini',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    models: ['gemini-2.0-flash', 'gemini-1.5-flash'],
+    models: ['gemini-2.5-flash', 'gemini-2.0-flash'],
     timeoutMs: 25_000,
     maxRetries: 1,
   },
   groq: {
+    // Groq hosts Meta Llama models — used as the high-speed Llama provider
     provider: 'groq',
     baseURL: 'https://api.groq.com/openai/v1',
-    models: ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama3-70b-8192'],
+    models: ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'llama-3.1-70b-versatile'],
     timeoutMs: 20_000,
     maxRetries: 1,
   },
 };
 
 // Provider call order for each routing strategy
+// Order: OpenAI (GPT-5.5) → Anthropic (Claude) → Gemini → Groq (Llama)
 const ROUTING_ORDER: Record<RoutingStrategy, AIProvider[]> = {
   primary_only:           [],
   single_fast:            ['groq'],
   single_primary:         ['openai'],
-  primary_with_fallback:  ['openai', 'gemini', 'groq'],
-  consensus_two:          ['openai', 'gemini'],
-  consensus_three:        ['openai', 'gemini', 'groq'],
+  primary_with_fallback:  ['openai', 'anthropic', 'gemini', 'groq'],
+  consensus_two:          ['openai', 'anthropic'],
+  consensus_three:        ['openai', 'anthropic', 'gemini'],
+  consensus_four:         ['openai', 'anthropic', 'gemini', 'groq'],
 };
 
 // ─── Circuit breaker helpers ─────────────────────────────────────────────────
@@ -119,9 +141,10 @@ function recordFailure(provider: AIProvider): void {
 // ─── Provider key resolver ────────────────────────────────────────────────────
 function getApiKey(provider: AIProvider): string | undefined {
   switch (provider) {
-    case 'openai': return Deno.env.get('OPENAI_API_KEY');
-    case 'gemini': return Deno.env.get('Gemini_API_Key');
-    case 'groq':   return Deno.env.get('Groq_API_Key');
+    case 'openai':    return Deno.env.get('OPENAI_API_KEY');
+    case 'anthropic': return Deno.env.get('ANTHROPIC_API_KEY');
+    case 'gemini':    return Deno.env.get('Gemini_API_Key');
+    case 'groq':      return Deno.env.get('Groq_API') ?? Deno.env.get('Groq_API_Key');
   }
 }
 
@@ -141,6 +164,10 @@ export interface AICallResult {
   tokensUsed?: number;
 }
 
+/**
+ * Call a single provider+model combination.
+ * Anthropic uses the native Messages API; all others use OpenAI-compatible /chat/completions.
+ */
 async function callProviderModel(
   provider: AIProvider,
   model: string,
@@ -155,37 +182,79 @@ async function callProviderModel(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
 
-    const body: Record<string, unknown> = {
-      model,
-      messages: options.messages,
-      temperature: options.temperature ?? 0.5,
-      max_tokens: options.maxTokens ?? 1400,
-    };
-    if (options.requireJsonObject) {
-      body.response_format = { type: 'json_object' };
+    let res: Response;
+
+    if (provider === 'anthropic') {
+      // ── Anthropic native Messages API ───────────────────────────────────────
+      // Extract system message (first message with role='system') if present
+      const systemMsg = options.messages.find((m) => m.role === 'system')?.content ?? '';
+      const userMessages = options.messages.filter((m) => m.role !== 'system');
+
+      const anthropicBody: Record<string, unknown> = {
+        model,
+        max_tokens: options.maxTokens ?? 1400,
+        temperature: options.temperature ?? 0.5,
+        messages: userMessages.map((m) => ({ role: m.role, content: m.content })),
+      };
+      if (systemMsg) anthropicBody.system = systemMsg;
+
+      res = await fetch(`${ANTHROPIC_API_BASE}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': ANTHROPIC_API_VERSION,
+        },
+        body: JSON.stringify(anthropicBody),
+        signal: controller.signal,
+      });
+    } else {
+      // ── OpenAI-compatible API (OpenAI, Gemini OpenAI-compat, Groq) ─────────
+      const body: Record<string, unknown> = {
+        model,
+        messages: options.messages,
+        temperature: options.temperature ?? 0.5,
+        max_tokens: options.maxTokens ?? 1400,
+      };
+      if (options.requireJsonObject && provider !== 'groq') {
+        // Groq Llama models may not support json_object response_format
+        body.response_format = { type: 'json_object' };
+      }
+
+      res = await fetch(`${cfg.baseURL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
     }
 
-    const res = await fetch(`${cfg.baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
     clearTimeout(timer);
 
     if (!res.ok) {
-      // 429/503/529 → rate limited: allow fallback
-      // 4xx (except 429) → bad request, skip to next provider (not retry)
-      console.warn(`[AIRouter] ${provider}/${model} returned ${res.status}`);
+      const errText = await res.text().catch(() => '');
+      console.warn(`[AIRouter] ${provider}/${model} returned ${res.status}: ${errText.slice(0, 120)}`);
       return null;
     }
 
     const data = await res.json() as Record<string, unknown>;
-    const content = ((data.choices as any[])?.[0]?.message?.content ?? '') as string;
-    const usage = data.usage as { total_tokens?: number } | undefined;
+
+    // Extract content — Anthropic and OpenAI-compat have different shapes
+    let content = '';
+    if (provider === 'anthropic') {
+      // Anthropic: data.content[0].text
+      const blocks = data.content as Array<{ type: string; text?: string }> | undefined;
+      content = blocks?.find((b) => b.type === 'text')?.text ?? '';
+    } else {
+      // OpenAI-compat: data.choices[0].message.content
+      content = ((data.choices as any[])?.[0]?.message?.content ?? '') as string;
+    }
+
+    const usage = data.usage as { total_tokens?: number; input_tokens?: number; output_tokens?: number } | undefined;
+    const tokensUsed = usage?.total_tokens ?? ((usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0));
 
     if (!content || content.length < 20) return null;
 
@@ -194,7 +263,7 @@ async function callProviderModel(
       model,
       content,
       latencyMs: Date.now() - startMs,
-      tokensUsed: usage?.total_tokens,
+      tokensUsed: tokensUsed || undefined,
     };
   } catch (err) {
     console.warn(`[AIRouter] ${provider}/${model} threw:`, err instanceof Error ? err.message : String(err));
@@ -332,17 +401,22 @@ export interface MatchContext {
 }
 
 export function selectRoutingStrategy(ctx: MatchContext): RoutingStrategy {
-  // High-value: major leagues, good data quality — use consensus
-  if (ctx.dqScore >= 70 && ctx.isHighValue) return 'consensus_two';
-  if (ctx.dqScore >= 80) return 'consensus_two';
+  // Full 4-provider consensus: major leagues with excellent data
+  if (ctx.dqScore >= 80 && ctx.isHighValue) return 'consensus_four';
 
-  // Live matches — prioritize speed
+  // 3-provider consensus: high data quality
+  if (ctx.dqScore >= 75) return 'consensus_three';
+
+  // 2-provider consensus: decent data, high-value league
+  if (ctx.dqScore >= 60 && ctx.isHighValue) return 'consensus_two';
+
+  // Live matches — prioritize speed (Llama via Groq)
   if (ctx.isLive) return 'single_fast';
 
-  // Low data quality — single fast provider
+  // Low data quality — fast single model (Llama)
   if (ctx.dqScore < 40) return 'single_fast';
 
-  // Default — primary with fallback
+  // Default — primary with sequential fallback through all 4 providers
   return 'primary_with_fallback';
 }
 
