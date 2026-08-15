@@ -1,6 +1,7 @@
 {
   "cli": {
     "version": ">= 16.0.0",
+    "requireCommit": false,
     "appVersionSource": "remote",
     "requireCommit": false
   },
@@ -11,12 +12,14 @@
       "distribution": "internal",
       "ios": {
         "simulator": true,
-        "resourceClass": "m-medium"
+        "resourceClass": "m-medium",
+        "image": "latest"
       },
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleDebug",
-        "googleServicesFile": "./google-services.json"
+        "googleServicesFile": "./google-services.json",
+        "image": "latest"
       },
       "env": {
         "APP_ENV": "development"
@@ -32,7 +35,8 @@
       },
       "android": {
         "buildType": "apk",
-        "googleServicesFile": "$GOOGLE_SERVICES_JSON"
+        "googleServicesFile": "$GOOGLE_SERVICES_JSON",
+        "image": "latest"
       },
       "env": {
         "APP_ENV": "preview"
