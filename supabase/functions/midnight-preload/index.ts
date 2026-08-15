@@ -72,14 +72,16 @@ const toDate = (d = new Date()) => d.toISOString().split('T')[0];
 const dayOffset = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d; };
 
 // All sports — invoked one-per-sport in parallel so each instance has its own TSDB throttle.
-// Calling sport=all in a single function instance forces all 21 sports to share one 3-second
-// TSDB throttle queue (63+ seconds minimum), which always exceeds the 55-second invoke timeout.
+// Calling sport=all in a single function instance forces all sports to share one 3-second
+// TSDB throttle queue, which always exceeds the 55-second invoke timeout.
 // Supported sports with reliable live fixtures, standings, statistics, and odds
 // from API-Football, API-Sports, and TheSportsDB.
+// Boxing uses TheSportsDB (World Boxing leagueId 692) + API-Sports v1.boxing.api-sports.io
+// Esports uses TheSportsDB (CS2/Dota2/LoL/Valorant) + API-Sports v1.esports.api-sports.io
 const FIXTURE_SPORTS = [
   'football', 'basketball', 'tennis', 'baseball', 'hockey',
   'rugby', 'handball', 'volleyball', 'american-football',
-  'cricket', 'mma', 'formula1', 'afl',
+  'cricket', 'mma', 'boxing', 'esports', 'formula1', 'afl',
 ] as const;
 
 // ─── STAGE 1: Fixtures (parallel per-sport) ──────────────────────────────────
@@ -368,7 +370,7 @@ async function stageCacheWarm(supabase: ReturnType<typeof adminClient>): Promise
   const start = Date.now();
   console.log('[midnight-preload] Stage 8: Warming all caches...');
 
-  const sports = ['all', 'football', 'basketball', 'tennis', 'cricket', 'baseball', 'hockey', 'rugby', 'mma', 'formula1', 'afl'];
+  const sports = ['all', 'football', 'basketball', 'tennis', 'cricket', 'baseball', 'hockey', 'rugby', 'mma', 'boxing', 'esports', 'formula1', 'afl'];
   let warmed = 0;
 
   // Update feed_cache_meta for all sports

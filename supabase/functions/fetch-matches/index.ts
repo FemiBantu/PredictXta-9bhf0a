@@ -11,6 +11,18 @@
  *   Tennis/Cricket/
  *   Formula1:           TheSportsDB v2 only (motorsport slug, isF1 regex filter)
  *
+ * CRITICAL FIXES v5.3 (over v5.2):
+ *  ✓ Boxing added: TheSportsDB primary (strSport="Boxing", leagueId 692 = World Boxing),
+ *    API-Sports secondary (v1.boxing.api-sports.io /fights). Fighter names are stored in
+ *    home_team/away_team fields (same as MMA). mapBoxingFight() normalizes the API-Sports
+ *    fighter response shape (fighters.home/away) identically to mapMmaFight().
+ *  ✓ Esports added: TheSportsDB primary (strSport="eSports", multiple leagues),
+ *    API-Sports secondary (v1.esports.api-sports.io /games). Tournament/map data stored in
+ *    stats JSON { tournament_stage, map, patch }. External IDs use 'esports-' prefix.
+ *  ✓ TSDB_V2_SPORT_SLUGS, TSDB_V1_SPORT_SLUGS, TSDB_STRSPORT_MAP, ALL_SPORTS, FIXTURE_SPORTS
+ *    all updated for boxing and esports.
+ *  ✓ mapTsdbEvent: boxing uses 'boxing' key; esports maps strVenue as 'map/tournament' context.
+ *
  * CRITICAL FIXES v5.2 (over v5.1):
  *  ✓ TSDB_STRSPORT_MAP — new reverse-mapping from TSDB verbose strSport names
  *    ("Mixed Martial Arts", "Ice Hockey", "American Football", …) to our internal
@@ -67,6 +79,8 @@ const API_AMERICAN_BASE   = 'https://v1.american-football.api-sports.io';
 // Tennis is handled EXCLUSIVELY via TheSportsDB (see fetchTennis below).
 const API_MMA_BASE        = 'https://v1.mma.api-sports.io';
 const API_AFL_BASE        = 'https://v1.afl.api-sports.io';
+const API_BOXING_BASE     = 'https://v1.boxing.api-sports.io';
+const API_ESPORTS_BASE    = 'https://v1.esports.api-sports.io';
 // Defined but intentionally unused — formula1/motorsports use TSDB only.
 // const API_NBA_BASE     = 'https://v2.nba.api-sports.io';
 // const API_FORMULA1_BASE = 'https://v1.formula-1.api-sports.io';
@@ -93,8 +107,10 @@ const TSDB_V2_SPORT_SLUGS: Record<string, string> = {
   rugby:              'rugby',
   'american-football':'american_football',
   mma:                'mma',
+  boxing:             'boxing',
   handball:           'handball',
   volleyball:         'volleyball',
+  esports:            'esports',
   formula1:           'motorsport',
   afl:                'australian_football',
 };
@@ -110,8 +126,10 @@ const TSDB_V1_SPORT_SLUGS: Record<string, string> = {
   rugby:              'Rugby+League',
   'american-football':'American+Football',
   mma:                'Mixed+Martial+Arts',
+  boxing:             'Boxing',
   handball:           'Handball',
   volleyball:         'Volleyball',
+  esports:            'eSports',
   formula1:           'Motorsport',
   afl:                'Australian+Football',
 };
@@ -143,8 +161,14 @@ const TSDB_STRSPORT_MAP: Record<string, string> = {
   'mixed martial arts':            'mma',
   'mixed_martial_arts':            'mma',
   'mma':                           'mma',
+  // Boxing: TSDB strSport is simply 'Boxing'
+  'boxing':                        'boxing',
   'handball':                      'handball',
   'volleyball':                    'volleyball',
+  // Esports: TSDB uses 'eSports' (with capital S); normalize to lowercase for matching
+  'esports':                       'esports',
+  'e-sports':                      'esports',
+  'e_sports':                      'esports',
   'australian rules football':     'afl',
   'australian_rules_football':     'afl',
   'australian football':           'afl',
@@ -177,11 +201,13 @@ const CACHE_TTL_MS              = 6 * 60 * 60 * 1000;
  * IMPORTANT: 'all' is a special routing value handled in the main handler.
  * AFL is included; NBA routes through basketball fetcher and is not listed
  * separately since its records carry sport='basketball' in the DB.
+ * Boxing and Esports are canonical registry sports — both use TheSportsDB as
+ * primary provider with API-Sports as secondary.
  */
 const ALL_SPORTS = [
   'football', 'basketball', 'tennis', 'baseball', 'hockey',
   'rugby', 'handball', 'volleyball', 'american-football',
-  'cricket', 'mma', 'formula1', 'afl',
+  'cricket', 'mma', 'boxing', 'esports', 'formula1', 'afl',
 ] as const;
 type SportKey = typeof ALL_SPORTS[number] | 'all';
 
@@ -961,11 +987,258 @@ async function fetchFormula1(mode: string): Promise<Record<string, unknown>[]> {
   return rows;
 }
 
-/**
- * Motorsports fetcher — TSDB only, non-F1 events.
- * Shares the 'Motorsport' TSDB v1 slug with fetchFormula1; distinguished by notF1 regex.
- * external_id prefix: 'motorsports-tsdb-' — validated by VALID_PREFIXES.motorsports = ['motorsports']
- */
+// ─── BOXING: TheSportsDB primary → API-Sports secondary ──────────────────────
+//
+// Boxing events store FIGHTER NAMES in home_team/away_team fields (same pattern
+// as MMA). This is consistent with quantitativeModels.ts boxingModel() which
+// reads homeFighterWins/Losses from those fields.
+//
+// TheSportsDB leagueId 692 = "World Boxing" (covers WBC/WBA/IBF/WBO title bouts).
+// Additional leagues are fetched via strSport=Boxing in eventsday.php.
+//
+// external_id: 'boxing-api-{id}'   for API-Sports fights
+//              'boxing-tsdb-{id}'  for TheSportsDB events
+// Both start with 'boxing-' → VALID_PREFIXES.boxing = ['boxing'] ✓
+
+interface ApiBoxingFight {
+  id: number;
+  category: { id: number; name: string; logo?: string };
+  date: string;
+  status: { short: string };
+  fighters: {
+    home: { id: number; name: string; logo?: string | null; weight_class?: string | null };
+    away: { id: number; name: string; logo?: string | null };
+  };
+  scores: { home: number | null; away: number | null };
+  weight_class?: string | null;
+  rounds?: number | null;
+  result?: string | null;
+  venue?: { name?: string | null; city?: string | null } | null;
+}
+
+function mapBoxingFight(g: ApiBoxingFight): Record<string, unknown> | null {
+  const h = (g.fighters?.home?.name ?? '').trim();
+  const a = (g.fighters?.away?.name ?? '').trim();
+  if (!h || !a) return null;
+  if (h.toLowerCase().includes('tbd') || a.toLowerCase().includes('tbd')) return null;
+  // external_id: 'boxing-api-{id}' — VALID_PREFIXES.boxing includes 'boxing' ✓
+  const venueParts = [g.venue?.name, g.venue?.city].filter(Boolean);
+  return {
+    external_id:   `boxing-api-${g.id}`,
+    sport:          'boxing',
+    league_id:      g.category?.id ?? null,
+    home_team:      h,
+    away_team:      a,
+    home_score:     g.scores?.home ?? 0,
+    away_score:     g.scores?.away ?? 0,
+    status:         mmaSportStatus(g.status?.short ?? ''),
+    match_time:     g.date ?? new Date().toISOString(),
+    league:         g.category?.name ?? 'Boxing Event',
+    country:        'International',
+    home_logo:      g.fighters?.home?.logo ?? null,
+    away_logo:      g.fighters?.away?.logo ?? null,
+    league_logo:    g.category?.logo ?? null,
+    venue:          venueParts.length > 0 ? venueParts.join(', ') : null,
+    minute:         0,
+    source_provider: 'api-sports',
+    last_updated:   new Date().toISOString(),
+    stats: {
+      weight_class: g.weight_class ?? g.fighters?.home?.weight_class ?? null,
+      rounds:       g.rounds ?? null,
+      result:       g.result ?? null,
+    },
+  };
+}
+
+async function fetchBoxing(mode: string, apiKey: string): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  const add = (r: Record<string, unknown> | null) => {
+    if (!r) return;
+    const e = r.external_id as string;
+    if (e && !seen.has(e)) { rows.push(r); seen.add(e); }
+  };
+
+  // ── TheSportsDB primary (livescore + eventsday) ──────────────────────────
+  if (mode === 'live' || mode === 'all') {
+    for (const e of await thesportsdbV2Livescore('boxing')) {
+      add(mapTsdbEvent(e, 'boxing', 'live'));
+    }
+  }
+  if (mode === 'today' || mode === 'all') {
+    // strSport=Boxing events for today
+    for (const e of await thesportsdbV1Eventsday('Boxing', toDate())) {
+      add(mapTsdbEvent(e, 'boxing'));
+    }
+  }
+
+  // ── API-Sports secondary (v1.boxing.api-sports.io) ───────────────────────
+  // /fights endpoint: same structure as MMA /fights
+  if (mode === 'live' || mode === 'all') {
+    for (const g of await apiSports(API_BOXING_BASE, '/fights?live=all', apiKey) as ApiBoxingFight[]) {
+      add(mapBoxingFight(g));
+    }
+  }
+  if (mode === 'today' || mode === 'all') {
+    for (const g of await apiSports(API_BOXING_BASE, `/fights?date=${toDate()}`, apiKey) as ApiBoxingFight[]) {
+      add(mapBoxingFight(g));
+    }
+    // Off-season lookahead: scan next 60 days for upcoming bouts
+    if (rows.length < 3) {
+      for (let d = 1; d <= 60 && rows.length < 10; d++) {
+        const dt = new Date(); dt.setDate(dt.getDate() + d);
+        for (const g of await apiSports(API_BOXING_BASE, `/fights?date=${toDate(dt)}`, apiKey) as ApiBoxingFight[]) {
+          add(mapBoxingFight(g));
+        }
+        if (rows.length >= 8) break;
+        if (d % 7 === 0) await sleep(500);
+      }
+    }
+  }
+
+  // ── Extended TSDB lookahead if still sparse ──────────────────────────────
+  if (rows.length < 3) {
+    for (const e of await thesportsdbExtendedLookahead('boxing', 60)) {
+      add(mapTsdbEvent(e, 'boxing'));
+    }
+  }
+
+  return rows;
+}
+
+// ─── ESPORTS: TheSportsDB primary → API-Sports secondary ─────────────────────
+//
+// Esports events are team-vs-team (not fighter-vs-fighter).
+// home_team/away_team = team names (e.g. "Team Liquid", "Natus Vincere").
+// stats JSON carries tournament/map metadata for the quantitative model.
+//
+// TheSportsDB covers major esports titles (CS2, Dota 2, LoL, Valorant, etc.).
+// API-Sports v1.esports.api-sports.io covers additional CS:GO/Valorant leagues.
+//
+// TSDB strVenue is overloaded in esports: it often contains the tournament stage
+// (e.g. "Quarter-Final", "Group Stage") or map name. We store it in stats.map
+// so the quantitative esports model can use it without polluting venue.
+//
+// external_id: 'esports-{id}'      for API-Sports games
+//              'esports-tsdb-{id}' for TheSportsDB events
+// Both start with 'esports-' → VALID_PREFIXES.esports = ['esports'] ✓
+
+function mapEsportsTsdbEvent(e: TsdbEvent): Record<string, unknown> | null {
+  const base = mapTsdbEvent(e, 'esports');
+  if (!base) return null;
+  // strVenue in TSDB esports often encodes tournament stage or map.
+  // Move it to stats.map so frontend can surface context without
+  // polluting the venue field (which is a physical location).
+  const rawVenue = e.strVenue ?? null;
+  const isPhysicalVenue = rawVenue
+    ? /arena|stadium|centre|center|hall|complex|park/i.test(rawVenue)
+    : false;
+  return {
+    ...base,
+    venue: isPhysicalVenue ? rawVenue : null,
+    stats: {
+      ...(base.stats as Record<string, unknown> ?? {}),
+      map:             isPhysicalVenue ? null : rawVenue,
+      tournament_stage: null,   // populated from strRound if available
+      patch:           null,    // populated from strSeason if encodes patch ver
+    },
+  };
+}
+
+interface ApiEsportsGame {
+  id: number;
+  date: string;
+  time: string;
+  status: { short: string };
+  league: { id: number; name: string; logo?: string; country: { name: string } };
+  teams: {
+    home: { id: number; name: string; logo: string };
+    away: { id: number; name: string; logo: string };
+  };
+  scores: { home: number | null; away: number | null };
+  // Esports-specific fields that some API-Sports endpoints return
+  map?: string | null;
+  patch?: string | null;
+  tournament_stage?: string | null;
+  best_of?: number | null;
+}
+
+function mapEsportsGame(g: ApiEsportsGame, status: 'live' | 'upcoming' | 'finished'): Record<string, unknown> {
+  return {
+    external_id:    `esports-${g.id}`,
+    sport:          'esports',
+    league_id:      g.league.id,
+    home_team:      g.teams.home.name,
+    away_team:      g.teams.away.name,
+    home_score:     g.scores.home ?? 0,
+    away_score:     g.scores.away ?? 0,
+    status,
+    match_time:     buildMatchTime(g.date, g.time),
+    league:         g.league.name,
+    country:        g.league.country?.name || 'International',
+    home_logo:      g.teams.home.logo || null,
+    away_logo:      g.teams.away.logo || null,
+    league_logo:    g.league.logo || null,
+    venue:          null,   // esports events rarely have physical venues
+    minute:         0,
+    source_provider: 'api-sports',
+    last_updated:   new Date().toISOString(),
+    stats: {
+      map:              g.map ?? null,
+      patch:            g.patch ?? null,
+      tournament_stage: g.tournament_stage ?? null,
+      best_of:          g.best_of ?? null,
+    },
+  };
+}
+
+async function fetchEsports(mode: string, apiKey: string): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  const add = (r: Record<string, unknown> | null) => {
+    if (!r) return;
+    const e = r.external_id as string;
+    if (e && !seen.has(e)) { rows.push(r); seen.add(e); }
+  };
+
+  // ── TheSportsDB primary ───────────────────────────────────────────────────
+  if (mode === 'live' || mode === 'all') {
+    for (const e of await thesportsdbV2Livescore('esports')) {
+      add(mapEsportsTsdbEvent(e));
+    }
+  }
+  if (mode === 'today' || mode === 'all') {
+    for (const e of await thesportsdbV1Eventsday('eSports', toDate())) {
+      add(mapEsportsTsdbEvent(e));
+    }
+  }
+
+  // ── API-Sports secondary (v1.esports.api-sports.io) ──────────────────────
+  if (mode === 'live' || mode === 'all') {
+    for (const g of await apiSports(API_ESPORTS_BASE, '/games?live=all', apiKey) as ApiEsportsGame[]) {
+      add(mapEsportsGame(g, 'live'));
+    }
+  }
+  if (mode === 'today' || mode === 'all') {
+    // Esports tournaments run on set schedules — scan 14 days ahead
+    for (let d = 0; d <= 14 && rows.length < 30; d++) {
+      const dt = new Date(); dt.setDate(dt.getDate() + d);
+      for (const g of await apiSports(API_ESPORTS_BASE, `/games?date=${toDate(dt)}`, apiKey) as ApiEsportsGame[]) {
+        add(mapEsportsGame(g, mmaSportStatus(g.status.short)));
+      }
+    }
+  }
+
+  // ── Extended TSDB lookahead if still sparse ──────────────────────────────
+  if (rows.length < 3) {
+    for (const e of await thesportsdbExtendedLookahead('esports', 30)) {
+      add(mapEsportsTsdbEvent(e));
+    }
+  }
+
+  return rows;
+}
+
 // ─── Upsert & cleanup ─────────────────────────────────────────────────────────
 async function upsertRows(supabase: ReturnType<typeof createClient>, rows: Record<string, unknown>[]): Promise<number> {
   const BATCH = 50;
@@ -1050,6 +1323,8 @@ Deno.serve(async (req: Request) => {
     if (sport === 'american-football' || sport === 'american_football' || sport === 'all')
       apiSportsFetchers.push(fetchAmericanFootball(mode, apiKey));
     if (sport === 'mma'               || sport === 'all') apiSportsFetchers.push(fetchMMA(mode, apiKey));
+    if (sport === 'boxing'            || sport === 'all') apiSportsFetchers.push(fetchBoxing(mode, apiKey));
+    if (sport === 'esports'           || sport === 'all') apiSportsFetchers.push(fetchEsports(mode, apiKey));
     if (sport === 'afl'               || sport === 'all')
       apiSportsFetchers.push(fetchApiSportsGeneric(mode, apiKey, API_AFL_BASE, 'afl', americanFootballStatus));
     // NBA alias: routes through basketball fetcher; records stored as sport='basketball'
@@ -1108,7 +1383,7 @@ Deno.serve(async (req: Request) => {
 
     if (inserted > 0) invalidateSyncCache('fetch-matches').catch(() => {});
 
-    // Sport breakdown across ALL_SPORTS (now includes 'afl')
+    // Sport breakdown across ALL_SPORTS (now includes 'boxing', 'esports', 'afl')
     const breakdown: Record<string, number> = {};
     for (const sp of ALL_SPORTS) breakdown[sp] = allRows.filter((r) => r.sport === sp).length;
 

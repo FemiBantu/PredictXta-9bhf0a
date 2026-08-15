@@ -5,7 +5,7 @@
  * prediction chip visibility, and overview engine selectors.
  *
  * Supported sports (13): football, basketball, tennis, cricket, baseball,
- * hockey, rugby, handball, volleyball, american-football, mma, formula1, afl
+ * hockey, rugby, handball, volleyball, american-football, mma, boxing, esports
  *
  * RULE: No football-specific metric (BTTS, xG, corners, possession,
  * formation, halftime-score) must ever render for non-football sports.
@@ -22,8 +22,10 @@ export type SportFamily =
   | 'american_football'
   | 'rugby'
   | 'mma'
+  | 'boxing'
   | 'volleyball'
   | 'handball'
+  | 'esports'
   | 'generic';
 
 export function getSportFamily(sport?: string | null): SportFamily {
@@ -38,13 +40,13 @@ export function getSportFamily(sport?: string | null): SportFamily {
   if (s === 'americanfootball' || s === 'nfl') return 'american_football';
   if (s.includes('rugby')) return 'rugby';
   if (s === 'mma' || s === 'ufc') return 'mma';
-  if (s === 'boxing') return 'boxing'; // boxing has its own family (can draw via technical draw)
+  if (s === 'boxing') return 'boxing';
   if (s === 'volleyball') return 'volleyball';
   if (s === 'handball') return 'handball';
   if (s === 'esports' || s === 'esport') return 'esports';
   // Removed sports (formula1, afl, badminton, table-tennis, snooker, darts,
-  // cycling, athletics, motorsports, squash) must not reach production paths.
-  // They fall through to 'generic' which renders minimal sport-agnostic UI.
+  // cycling, athletics, motorsports, squash) are no longer active.
+  // They fall through to 'generic' which renders a minimal sport-agnostic UI.
   return 'generic';
 }
 
@@ -61,6 +63,22 @@ export interface SportTerms {
   scoringModelTitle: string; // "Goal Probability", "Points Projection"
   overUnderLabel: (line: number) => string; // "Over 2.5 Goals", "Over 215.5 Pts"
 }
+
+// Boxing and Esports terms
+const BOXING_TERMS: SportTerms = {
+  scoreUnit: 'rounds', resultLabels: ['1 Home Win', 'X Draw', '2 Away Win'],
+  hasDraw: true, scoreEmoji: '🥊', sportEmoji: '🥊', winLabel: 'Win',
+  drawLabel: 'Draw', predictionTitle: 'Fight Prediction',
+  scoringModelTitle: 'Fight Outcome Model',
+  overUnderLabel: (l) => `Over/Under ${l} Rounds`,
+};
+const ESPORTS_TERMS: SportTerms = {
+  scoreUnit: 'maps', resultLabels: ['Home Win', '—', 'Away Win'],
+  hasDraw: false, scoreEmoji: '🎮', sportEmoji: '🎮', winLabel: 'Win',
+  drawLabel: '—', predictionTitle: 'Match Prediction',
+  scoringModelTitle: 'Win Probability Model',
+  overUnderLabel: (l) => `Over/Under ${l} Maps`,
+};
 
 const SPORT_TERMS: Record<SportFamily, SportTerms> = {
   football: {
@@ -140,6 +158,8 @@ const SPORT_TERMS: Record<SportFamily, SportTerms> = {
     scoringModelTitle: 'Goals Projection Model',
     overUnderLabel: (l) => `Over/Under ${l} Goals`,
   },
+  boxing: BOXING_TERMS,
+  esports: ESPORTS_TERMS,
   generic: {
     scoreUnit: 'points', resultLabels: ['Home Win', 'Draw', 'Away Win'],
     hasDraw: false, scoreEmoji: '🏆', sportEmoji: '🏆', winLabel: 'Win',
@@ -167,6 +187,19 @@ export interface PredictionChipConfig {
   overUnderUnit: string;    // "Goals", "Points", "Sets", "Runs"
   resultChipLabel: (result: string, home: string, away: string) => string;
 }
+
+const BOXING_CHIP: PredictionChipConfig = {
+  showResult: true, showOverUnder: false, showBTTS: false,
+  showSpread: false, showSets: false, showRounds: true,
+  showRuns: false, showMethod: true, overUnderUnit: 'Rounds',
+  resultChipLabel: (r, h, a) => r === 'home_win' ? `${h.split(' ').slice(-1)[0]} WIN` : r === 'away_win' ? `${a.split(' ').slice(-1)[0]} WIN` : 'DRAW',
+};
+const ESPORTS_CHIP: PredictionChipConfig = {
+  showResult: true, showOverUnder: true, showBTTS: false,
+  showSpread: false, showSets: false, showRounds: false,
+  showRuns: false, showMethod: false, overUnderUnit: 'Maps',
+  resultChipLabel: (r, h, a) => r === 'home_win' ? `${h.split(' ').slice(-1)[0]} WIN` : `${a.split(' ').slice(-1)[0]} WIN`,
+};
 
 const CHIP_CONFIGS: Record<SportFamily, PredictionChipConfig> = {
   football: {
@@ -235,6 +268,8 @@ const CHIP_CONFIGS: Record<SportFamily, PredictionChipConfig> = {
     showRuns: false, showMethod: false, overUnderUnit: 'Goals',
     resultChipLabel: (r, h, a) => r === 'home_win' ? '1 HOME' : r === 'away_win' ? '2 AWAY' : 'X DRAW',
   },
+  boxing: BOXING_CHIP,
+  esports: ESPORTS_CHIP,
   generic: {
     showResult: true, showOverUnder: false, showBTTS: false,
     showSpread: false, showSets: false, showRounds: false,

@@ -167,6 +167,9 @@ function tomorrowStr() {
   return d.toISOString().split('T')[0];
 }
 
+// Canonical 13-sport registry — must match services/sportsRegistry.ts SUPPORTED_SPORTS
+// Boxing and Esports added; AFL retained for data validation but excluded from
+// prediction generation (no quality-gated AI models for AFL currently).
 const ALL_SPORTS = [
   'football', 'basketball', 'tennis', 'cricket', 'baseball',
   'hockey', 'rugby', 'handball', 'volleyball', 'mma', 'boxing',
@@ -499,7 +502,7 @@ async function stageCacheWarm(
   console.log('[Stage 7] Warming prediction cache...');
 
   try {
-    const sports = ['football', 'basketball', 'tennis', 'cricket', 'baseball', 'hockey', 'rugby', 'handball', 'volleyball', 'mma', 'boxing', 'all'];
+    const sports = ['football', 'basketball', 'tennis', 'cricket', 'baseball', 'hockey', 'rugby', 'handball', 'volleyball', 'mma', 'boxing', 'esports', 'all'];
     let updated = 0;
 
     for (const sport of sports) {
