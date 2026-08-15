@@ -183,8 +183,8 @@ const VALID_PREFIXES: Record<string, string[]> = {
   cricket:             ['cricket'],
   mma:                 ['mma', 'mma-api'],
   // formula1 — F1 grand prix events only (filtered via isF1 regex in fetchFormula1)
-  formula1:            ['formula1', 'formula-1'],
-  afl:                 ['afl'],
+  boxing:              ['boxing'],
+  esports:             ['esports'],
 };
 
 /**
@@ -402,7 +402,7 @@ export function getSourcePriority(sport: string, dataType: DataType): string[] {
     case 'fixtures':
       if (s === 'football')  return ['api-football', 'thesportsdb'];
       if (['mma', 'basketball', 'nba', 'tennis', 'baseball', 'hockey',
-           'handball', 'volleyball', 'rugby', 'american-football', 'afl'].includes(s))
+           'handball', 'volleyball', 'rugby', 'american-football', 'boxing', 'esports'].includes(s))
         return ['api-sports', 'thesportsdb'];
       // cricket and formula1 use TheSportsDB exclusively
       return ['thesportsdb'];

@@ -320,7 +320,22 @@ export function setupPurchaseListeners(
   };
 }
 
-// ─── Backend entitlement sync ─────────────────────────────────────────────────
+// ─── Backend entitlement sync via server-side Edge Function ──────────────────
+//
+// SECURITY: Entitlements MUST be granted server-side via an Edge Function
+// that verifies the purchase receipt with Apple/Google, not by writing
+// directly to vip_subscriptions from the client.
+//
+// The client calls the verify-purchase Edge Function with the purchase
+// receipt/token. The Edge Function:
+//   1. Verifies with Apple StoreKit / Google Play Billing API
+//   2. Checks idempotency (transactionId already processed?)
+//   3. Records transaction in audit log
+//   4. Updates vip_subscriptions using service_role (bypasses RLS)
+//   5. Returns entitlement status to client
+//
+// Fallback: If Edge Function is unavailable, the client writes a PENDING
+// record that a background job will settle via receipt verification.
 export async function grantVipEntitlement(
   userId: string,
   plan: IAPPlan,
@@ -328,26 +343,45 @@ export async function grantVipEntitlement(
 ): Promise<{ ok: boolean; error: string | null }> {
   try {
     const supabase = getSupabaseClient();
-    const expiresAt =
-      plan.daysValid > 0
-        ? new Date(Date.now() + plan.daysValid * 24 * 60 * 60 * 1000).toISOString()
-        : new Date('2099-12-31').toISOString();
 
-    await supabase
-      .from('vip_subscriptions')
-      .update({ status: 'superseded' })
-      .eq('user_id', userId)
-      .eq('status', 'active');
+    // ── Primary: verify via server-side Edge Function ────────────────────────
+    // The Edge Function verifies the receipt and writes the entitlement
+    // using service_role, bypassing client RLS.
+    const { data, error: fnError } = await supabase.functions.invoke('verify-purchase', {
+      body: {
+        userId,
+        productId: plan.id,
+        transactionId: purchase.transactionId ?? null,
+        purchaseToken: (purchase as any).purchaseToken ?? null,
+        platform: require('react-native').Platform.OS,
+        isSubscription: plan.isSubscription,
+        daysValid: plan.daysValid,
+      },
+    });
 
-    const { error } = await supabase.from('vip_subscriptions').insert({
+    if (!fnError && data?.ok) {
+      console.log('[IAP] VIP entitlement verified server-side:', plan.id);
+      return { ok: true, error: null };
+    }
+
+    // ── Fallback: record as pending (background job will verify) ─────────────
+    // Client writes a PENDING record — the RLS policy allows the user to
+    // insert their own row. The background settle job will verify the receipt
+    // and promote to 'active' or reject to 'failed'.
+    console.warn('[IAP] Edge Function unavailable, recording pending entitlement:', fnError?.message);
+    const expiresAt = plan.daysValid > 0
+      ? new Date(Date.now() + plan.daysValid * 24 * 60 * 60 * 1000).toISOString()
+      : new Date('2099-12-31').toISOString();
+
+    const { error: insertError } = await supabase.from('vip_subscriptions').insert({
       user_id: userId,
       plan: plan.id,
-      status: 'active',
+      status: 'pending_verification',
       expires_at: expiresAt,
     });
 
-    if (error) return { ok: false, error: error.message };
-    console.log('[IAP] VIP entitlement granted:', plan.id, 'expires:', expiresAt);
+    if (insertError) return { ok: false, error: insertError.message };
+    console.log('[IAP] Pending entitlement recorded — awaiting server verification');
     return { ok: true, error: null };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -360,6 +394,9 @@ export async function grantCoins(
 ): Promise<{ ok: boolean; error: string | null }> {
   try {
     const supabase = getSupabaseClient();
+    // Coins are granted server-side via add_user_coins (SECURITY DEFINER).
+    // This RPC is the only safe path — client cannot directly UPDATE user_coins
+    // because the service_update_coins RLS policy restricts direct updates.
     const { error } = await supabase.rpc('add_user_coins', {
       p_user_id: userId,
       p_amount: coinAmount,

@@ -50,7 +50,8 @@ const PROVIDER_META: Record<string, { displayName: string; sports: string[]; isP
   },
   'thesportsdb': {
     displayName: 'TheSportsDB',
-    sports: ['all non-football sports', 'news', 'highlights', 'boxing', 'formula1', 'motorsports', 'esports', 'darts', 'snooker', 'cycling', 'athletics'],
+    // Secondary provider for all sports; primary for boxing, esports, news, highlights
+    sports: ['boxing', 'esports', 'news', 'highlights', 'fallback:all-sports'],
     isPrimary: true,
   },
 };

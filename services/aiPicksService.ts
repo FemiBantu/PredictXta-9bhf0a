@@ -18,10 +18,10 @@ import { getSupabaseClient } from '@/template';
 
 /** Minimum data quality thresholds for prediction generation */
 const MIN_FORM_ENTRIES = 2;   // at least 2 results in home or away form array
+// Sports that rarely carry form arrays but still have enough signal for prediction.
+// Only contains actively supported sports from the canonical 13-sport registry.
 const SUFFICIENT_SPORTS_WITHOUT_FORM = new Set([
-  // These sports rarely carry form arrays but still have enough signal
-  'tennis', 'mma', 'boxing', 'formula1', 'formula-1', 'motorsports',
-  'darts', 'snooker', 'cycling', 'athletics', 'badminton', 'table-tennis',
+  'tennis', 'mma', 'boxing', 'esports',
 ]);
 
 /** Returns true when a match has enough data to run prediction generation */
@@ -124,15 +124,8 @@ const SPORT_KEY_OVERRIDES: Record<string, string> = {
   'american football': 'american-football',
   'americanfootball': 'american-football',
   'nfl': 'american-football',
-  'table tennis': 'table-tennis',
-  'tabletennis': 'table-tennis',
-  'ping pong': 'table-tennis',
-  'pingpong': 'table-tennis',
   'ice hockey': 'hockey',
   'icehockey': 'hockey',
-  'formula 1': 'formula-1',
-  'formula1': 'formula-1',
-  'f1': 'formula-1',
   'mma/ufc': 'mma',
   'ufc': 'mma',
   'soccer': 'football',
@@ -201,11 +194,11 @@ function isTopLeague(leagueName: string): boolean {
     [...PRIORITY_LEAGUES].some((pl) => leagueName.toLowerCase().includes(pl.toLowerCase()));
 }
 
-/** Sports that are genuinely off-season / data-sparse — show recent finished matches as context */
+// Sports that are genuinely off-season or data-sparse — show wider date window
+// so the closest available fixtures appear rather than a blank screen.
+// Only contains actively supported sports from the canonical 13-sport registry.
 const EXTENDED_LOOKAHEAD_SPORTS = new Set([
-  'basketball', 'cricket', 'tennis', 'table-tennis', 'badminton',
-  'formula1', 'formula-1', 'motorsports', 'cycling', 'athletics',
-  'darts', 'snooker', 'esports', 'afl', 'american-football',
+  'basketball', 'cricket', 'tennis', 'esports', 'american-football',
 ]);
 
 // ─── Main Fetcher ─────────────────────────────────────────────────────────────

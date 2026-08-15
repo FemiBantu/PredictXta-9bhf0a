@@ -87,7 +87,8 @@ function useVipChat(enabled: boolean) {
     const rid = roomRef.current;
     if (!rid) return;
     const data = await fetchMessages(rid, 50);
-    setMessages(data.length > 0 ? data : MOCK_VIP_MESSAGES);
+    // Production rule: show real messages only — never mock data
+    setMessages(data);
     setLoading(false);
   }, []);
 
@@ -123,39 +124,9 @@ function useVipChat(enabled: boolean) {
   return { messages, loading, sending, send };
 }
 
-// ─── Mock VIP messages (shown when DB is empty) ───────────────────────────────
-const MOCK_VIP_MESSAGES: ChatMessage[] = [
-  {
-    id: 'vm1', roomId: 'vip-lounge', userId: 'vip-a',
-    username: 'GoldAnalyst', content: 'City vs Real Madrid — both teams to score is the lock of the week. See my full breakdown below.',
-    createdAt: new Date(Date.now() - 600_000).toISOString(),
-  },
-  {
-    id: 'vm2', roomId: 'vip-lounge', userId: 'vip-b',
-    username: 'ElitePickster', content: 'Alcaraz on clay is nearly unbeatable right now. Backing him at 1.80 on Roland Garros.',
-    createdAt: new Date(Date.now() - 480_000).toISOString(),
-  },
-  {
-    id: 'vm3', roomId: 'vip-lounge', userId: 'vip-c',
-    username: 'BankrollMaster', content: 'Stake sizing is everything. No single bet should exceed 3% of your bankroll — even the highest-confidence picks.',
-    createdAt: new Date(Date.now() - 360_000).toISOString(),
-  },
-  {
-    id: 'vm4', roomId: 'vip-lounge', userId: 'vip-a',
-    username: 'GoldAnalyst', content: 'Warriors -4.5 tonight. Curry is in peak form and the Lakers are on a back-to-back. Line value here.',
-    createdAt: new Date(Date.now() - 240_000).toISOString(),
-  },
-  {
-    id: 'vm5', roomId: 'vip-lounge', userId: 'vip-d',
-    username: 'OddsWatcher', content: 'Barcelona Under 2.5 moving from 2.10 to 1.90 — sharp money coming in on Atletico shutting them down.',
-    createdAt: new Date(Date.now() - 120_000).toISOString(),
-  },
-];
-
-// VIP usernames — award crown badge to these (seeded VIP members)
-const VIP_USERNAMES = new Set([
-  'GoldAnalyst', 'ElitePickster', 'BankrollMaster', 'OddsWatcher',
-]);
+// VIP usernames — crown badge awarded to actual VIP users (loaded from DB in production)
+// No seeded mock usernames here; the badge is granted based on vip_subscriptions table.
+const VIP_USERNAMES = new Set<string>();
 
 // ─── Time helper ──────────────────────────────────────────────────────────────
 function timeAgo(iso: string) {
@@ -276,14 +247,14 @@ function LockedScreen({ onUpgrade }: { onUpgrade: () => void }) {
 
   return (
     <View style={locked.root}>
-      {/* Blurred preview of chat (decorative) */}
+      {/* Blurred preview of chat (decorative) — placeholder shapes only, no mock content */}
       <View style={locked.previewWrap} pointerEvents="none">
-        {MOCK_VIP_MESSAGES.slice(0, 3).map((m) => (
-          <View key={m.id} style={locked.previewBubble}>
+        {[0, 1, 2].map((i) => (
+          <View key={i} style={locked.previewBubble}>
             <View style={locked.previewDot} />
             <View style={locked.previewBar}>
-              <View style={[locked.previewLine, { width: `${55 + Math.random() * 35}%` as any }]} />
-              <View style={[locked.previewLine, { width: `${30 + Math.random() * 40}%` as any, marginTop: 4 }]} />
+              <View style={[locked.previewLine, { width: `${60 + i * 12}%` as any }]} />
+              <View style={[locked.previewLine, { width: `${40 + i * 10}%` as any, marginTop: 4 }]} />
             </View>
           </View>
         ))}

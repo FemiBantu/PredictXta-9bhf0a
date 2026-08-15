@@ -1,0 +1,91 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote",
+    "requireCommit": false
+  },
+  "build": {
+    "development": {
+      "_comment": "Development: reads real google-services.json from local disk (never committed to git)",
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true,
+        "resourceClass": "m-medium"
+      },
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug",
+        "googleServicesFile": "./google-services.json"
+      },
+      "env": {
+        "APP_ENV": "development"
+      }
+    },
+    "preview": {
+      "_comment": "Preview: injects credentials from EAS secrets GOOGLE_SERVICES_JSON / GOOGLE_SERVICES_PLIST",
+      "distribution": "internal",
+      "channel": "preview",
+      "ios": {
+        "resourceClass": "m-medium",
+        "googleServicesFile": "$GOOGLE_SERVICES_PLIST"
+      },
+      "android": {
+        "buildType": "apk",
+        "googleServicesFile": "$GOOGLE_SERVICES_JSON"
+      },
+      "env": {
+        "APP_ENV": "preview"
+      }
+    },
+    "production": {
+      "_comment": "Production: injects credentials from EAS secrets GOOGLE_SERVICES_JSON / GOOGLE_SERVICES_PLIST",
+      "autoIncrement": true,
+      "channel": "production",
+      "ios": {
+        "resourceClass": "m-medium",
+        "image": "latest",
+        "googleServicesFile": "$GOOGLE_SERVICES_PLIST"
+      },
+      "android": {
+        "buildType": "app-bundle",
+        "googleServicesFile": "$GOOGLE_SERVICES_JSON"
+      },
+      "env": {
+        "APP_ENV": "production"
+      }
+    },
+    "production-apk": {
+      "_comment": "Same as production but outputs APK for sideloading / direct download",
+      "extends": "production",
+      "android": {
+        "buildType": "apk"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "_comment": "Set these via EAS secrets — never commit real credentials: eas secret:create --scope project --name APPLE_ID --value your@email.com",
+        "appleId": "$APPLE_ID",
+        "ascAppId": "$APP_STORE_CONNECT_APP_ID",
+        "appleTeamId": "$APPLE_TEAM_ID",
+        "language": "en-US",
+        "sku": "predictxta-ios-001"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./google-service-account.json",
+        "track": "internal",
+        "releaseStatus": "draft",
+        "changesNotSentForReview": false
+      }
+    },
+    "internal": {
+      "android": {
+        "serviceAccountKeyPath": "./google-service-account.json",
+        "track": "internal",
+        "releaseStatus": "completed"
+      }
+    }
+  }
+}
