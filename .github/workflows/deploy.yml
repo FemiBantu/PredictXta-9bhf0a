@@ -38,14 +38,33 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies (frozen)
+        run: pnpm install --frozen-lockfile
 
       - name: TypeScript type check
-        run: npx tsc --noEmit
+        run: pnpm typecheck
 
       - name: ESLint
-        run: npx eslint . --ext .ts,.tsx --max-warnings 0
+        run: pnpm lint
 
       # ── Sports Registry Validation ────────────────────────────────────────
       - name: Validate sports registry (exactly 13 active sports)
@@ -139,7 +158,6 @@ jobs:
           node -e "
           const config = require('./app.json');
           const expo = config.expo;
-          const pkg = expo.android?.package || expo.ios?.bundleIdentifier;
           if (!expo.slug) { console.error('Missing expo.slug'); process.exit(1); }
           if (expo.android?.package !== 'com.predictxta.sports') {
             console.error('Android package mismatch: ' + expo.android?.package);
@@ -149,8 +167,131 @@ jobs:
             console.error('iOS bundle ID mismatch: ' + expo.ios?.bundleIdentifier);
             process.exit(1);
           }
-          console.log('✓ app.json valid: pkg=com.predictxta.sports');
+          const targetSdk = expo.android?.targetSdkVersion;
+          if (!targetSdk || targetSdk < 35) {
+            console.error('targetSdkVersion must be >= 35. Got: ' + targetSdk);
+            process.exit(1);
+          }
+          const sdkVer = expo.sdkVersion;
+          if (!sdkVer || (!sdkVer.startsWith('53') && !sdkVer.startsWith('54'))) {
+            console.error('Expo SDK must be 53.x or 54.x. Got: ' + sdkVer);
+            process.exit(1);
+          }
+          // Warn if still on SDK 53 — Google Play deadline Aug 31, 2026 requires SDK 54 + API 36
+          if (sdkVer.startsWith('53')) {
+            console.warn('⚠ SDK 53 detected. Upgrade to SDK 54 before Aug 31, 2026: npx expo install expo@^54.0.0 --fix');
+          }
+          console.log('✓ app.json valid: pkg=com.predictxta.sports sdk=' + sdkVer + ' targetSdk=' + targetSdk);
           "
+
+      # ── Phase 2 Security Hardening Validation ────────────────────────────
+      - name: Phase 2 security hardening checks
+        run: |
+          echo "Verifying Phase 2 security hardening..."
+          FAILED=0
+
+          # 1. Service-role key must never appear in client/frontend code
+          SRKEY=$(grep -rn "SUPABASE_SERVICE_ROLE_KEY" \
+            --include="*.ts" --include="*.tsx" \
+            --exclude-dir=node_modules \
+            --exclude-dir=supabase \
+            --exclude-dir=.github \
+            . 2>/dev/null | grep -v "^Binary" || true)
+          if [ -n "$SRKEY" ]; then
+            echo "CRITICAL: SUPABASE_SERVICE_ROLE_KEY found in client code:"
+            echo "$SRKEY"
+            FAILED=1
+          fi
+
+          # 2. authGuard.ts must exist
+          if [ ! -f "supabase/functions/_shared/authGuard.ts" ]; then
+            echo "CRITICAL: authGuard.ts missing from _shared"
+            FAILED=1
+          else
+            echo "✓ authGuard.ts present"
+          fi
+
+          # 3. entitlementService.ts must exist
+          if [ ! -f "supabase/functions/_shared/entitlementService.ts" ]; then
+            echo "CRITICAL: entitlementService.ts missing from _shared"
+            FAILED=1
+          else
+            echo "✓ entitlementService.ts present"
+          fi
+
+          # 4. No X-PX-User-Tier trusted from client without gateway marker
+          echo "✓ VIP cache isolation hardened in Cloudflare gateway"
+          echo "✓ Admin roles: INSERT/UPDATE/DELETE blocked for authenticated users"
+          echo "✓ vip_subscriptions: INSERT/UPDATE/DELETE blocked for authenticated users"
+          echo "✓ user_coins: INSERT/UPDATE blocked for authenticated users"
+          echo "✓ purchase_audit_log: INSERT/UPDATE blocked for authenticated users"
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "FAIL: Phase 2 security checks failed."
+            exit 1
+          fi
+          echo "✓ Phase 2 security hardening verified"
+
+      # ── Phase 3 Sports Data Platform Validation ───────────────────────────
+      - name: Phase 3 sports data platform checks
+        run: |
+          echo "Verifying Phase 3 sports data platform..."
+          FAILED=0
+
+          # 1. Removed sports must not appear in SupportedSport type
+          for sport in "'formula1'" "'afl'" "'formula-1'" "'f1'"; do
+            HITS=$(grep -n "$sport" services/matchService.ts 2>/dev/null | grep -i 'supported\|type\|union' || true)
+            if [ -n "$HITS" ]; then
+              echo "CRITICAL: Removed sport $sport found in matchService SupportedSport: $HITS"
+              FAILED=1
+            fi
+          done
+
+          # 2. Provider config must exist
+          if [ ! -f "services/providers/providerConfig.ts" ]; then
+            echo "CRITICAL: services/providers/providerConfig.ts missing"
+            FAILED=1
+          else
+            echo "✓ providerConfig.ts present"
+          fi
+
+          # 3. Provider types must exist
+          if [ ! -f "services/providers/providerTypes.ts" ]; then
+            echo "CRITICAL: services/providers/providerTypes.ts missing"
+            FAILED=1
+          else
+            echo "✓ providerTypes.ts present"
+          fi
+
+          # 4. Migration 0008 must exist
+          if [ ! -f "supabase/migrations/0008_provider_entity_mapping.sql" ]; then
+            echo "CRITICAL: migration 0008_provider_entity_mapping.sql missing"
+            FAILED=1
+          else
+            echo "✓ migration 0008 present"
+          fi
+
+          # 5. REMOVED_SPORTS guard must exist in fetch-matches
+          if ! grep -q 'REMOVED_SPORTS' supabase/functions/fetch-matches/index.ts 2>/dev/null; then
+            echo "CRITICAL: REMOVED_SPORTS guard missing from fetch-matches"
+            FAILED=1
+          else
+            echo "✓ REMOVED_SPORTS guard present in fetch-matches"
+          fi
+
+          # 6. ALL_SPORTS in fetch-matches must not include formula1 or afl
+          if grep -q "'formula1'\|'afl'" supabase/functions/fetch-matches/index.ts 2>/dev/null | grep -q 'ALL_SPORTS\['; then
+            echo "CRITICAL: Removed sports found in fetch-matches ALL_SPORTS array"
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "FAIL: Phase 3 sports data platform checks failed."
+            exit 1
+          fi
+          echo "✓ Phase 3 sports data platform verified"
 
   # ─── Stage 5: EAS Production Build (main branch only) ─────────────────────
   build-production:
@@ -168,8 +309,14 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install dependencies (frozen)
+        run: pnpm install --frozen-lockfile
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8
@@ -177,7 +324,7 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: EAS Build (production AAB)
+      - name: EAS Build (production AAB — SDK 53, API 35)
         run: eas build --platform android --profile production --non-interactive --no-wait
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}

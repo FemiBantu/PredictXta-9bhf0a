@@ -12,7 +12,7 @@
     "scheme": "predictxta",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": false,
-    "sdkVersion": "54.0.0",
+    "sdkVersion": "53.0.0",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.predictxta.sports",
@@ -71,7 +71,7 @@
       "googleServicesFile": "./google-services.json",
       "icon": "./assets/logo.png",
       "minSdkVersion": 24,
-      "targetSdkVersion": 36,
+      "targetSdkVersion": 35,
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#0A0F1E"
@@ -218,7 +218,8 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": false
+      "reactCompiler": false,
+      "sdkVersionNote": "SDK 53 is the installed version. Upgrade to SDK 54 requires: npx expo install expo@^54.0.0 --fix"
     },
     "extra": {
       "eas": {

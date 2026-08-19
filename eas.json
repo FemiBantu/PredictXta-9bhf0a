@@ -2,8 +2,7 @@
   "cli": {
     "version": ">= 16.0.0",
     "requireCommit": false,
-    "appVersionSource": "remote",
-    "requireCommit": false
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
@@ -31,6 +30,7 @@
       "channel": "preview",
       "ios": {
         "resourceClass": "m-medium",
+        "image": "latest",
         "googleServicesFile": "$GOOGLE_SERVICES_PLIST"
       },
       "android": {
@@ -53,7 +53,8 @@
       },
       "android": {
         "buildType": "app-bundle",
-        "googleServicesFile": "$GOOGLE_SERVICES_JSON"
+        "googleServicesFile": "$GOOGLE_SERVICES_JSON",
+        "image": "latest"
       },
       "env": {
         "APP_ENV": "production"

@@ -1,5 +1,13 @@
 /**
- * fetch-matches — Multi-provider sports fixture ingestion v5.2
+ * fetch-matches — Multi-provider sports fixture ingestion v6.0
+ *
+ * Phase 3 changes (v6.0 over v5.3):
+ *  ✓ formula1 and afl REMOVED from ALL_SPORTS and routing.
+ *    These sports are not in the canonical 13-sport registry.
+ *    Requests with sport=formula1 or sport=afl now return HTTP 400.
+ *  ✓ REMOVED_SPORTS guard added to main handler.
+ *  ✓ ALL_SPORTS constant now exactly matches canonical 13-sport registry.
+ *  ✓ Sport breakdown in response uses only canonical 13 sports.
  *
  * Provider hierarchy:
  *   Football:           API-Football (primary) → TheSportsDB v2 (secondary)
@@ -7,40 +15,9 @@
  *   Baseball/Handball/
  *   Volleyball/Rugby/
  *   American-Football/
- *   MMA/AFL:            API-Sports sub-domain (primary) → TheSportsDB v2 (secondary)
+ *   MMA:                API-Sports sub-domain (primary) → TheSportsDB v2 (secondary)
  *   Tennis/Cricket/
- *   Formula1:           TheSportsDB v2 only (motorsport slug, isF1 regex filter)
- *
- * CRITICAL FIXES v5.3 (over v5.2):
- *  ✓ Boxing added: TheSportsDB primary (strSport="Boxing", leagueId 692 = World Boxing),
- *    API-Sports secondary (v1.boxing.api-sports.io /fights). Fighter names are stored in
- *    home_team/away_team fields (same as MMA). mapBoxingFight() normalizes the API-Sports
- *    fighter response shape (fighters.home/away) identically to mapMmaFight().
- *  ✓ Esports added: TheSportsDB primary (strSport="eSports", multiple leagues),
- *    API-Sports secondary (v1.esports.api-sports.io /games). Tournament/map data stored in
- *    stats JSON { tournament_stage, map, patch }. External IDs use 'esports-' prefix.
- *  ✓ TSDB_V2_SPORT_SLUGS, TSDB_V1_SPORT_SLUGS, TSDB_STRSPORT_MAP, ALL_SPORTS, FIXTURE_SPORTS
- *    all updated for boxing and esports.
- *  ✓ mapTsdbEvent: boxing uses 'boxing' key; esports maps strVenue as 'map/tournament' context.
- *
- * CRITICAL FIXES v5.2 (over v5.1):
- *  ✓ TSDB_STRSPORT_MAP — new reverse-mapping from TSDB verbose strSport names
- *    ("Mixed Martial Arts", "Ice Hockey", "American Football", …) to our internal
- *    sport keys. Without this, thesportsdbV2Livescore's /livescore/all fallback
- *    filtered by slug equality and silently missed all MMA, hockey, rugby, etc.
- *    live events because TSDB strSport never matched the compact slug.
- *  ✓ thesportsdbV2Livescore — uses TSDB_STRSPORT_MAP for robust strSport matching
- *    in the /livescore/all fallback path; also checks TSDB v2 slug equivalence.
- *  ✓ AFL added to ALL_SPORTS, TSDB_V2_SPORT_SLUGS, TSDB_V1_SPORT_SLUGS, and
- *    TSDB_STRSPORT_MAP; AFL events now appear in the breakdown response.
- *  ✓ API key fallback: checks API_SPORTS_KEY if API_FOOTBALL_KEY is absent.
- *    Both env vars refer to the same api-sports.io unified key; the naming
- *    difference was causing silent failures when only one was set.
- *  ✓ Formula1/motorsports external_id prefixes corrected: formula1 events get
- *    'formula1-tsdb-' prefix; motorsports events get 'motorsports-tsdb-' prefix.
- *    dataNormalizer VALID_PREFIXES updated to match.
- *  ✓ sport='all' guard: logs a warning since parallel per-sport invocations
- *    (via midnight-preload) are strongly preferred to avoid TSDB throttle timeout.
+ *   Boxing/Esports:     TheSportsDB v2 (primary) → API-Sports (secondary)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -197,18 +174,24 @@ const TSDB_TIMEOUT_MS           = 10_000;
 const CACHE_TTL_MS              = 6 * 60 * 60 * 1000;
 
 /**
- * All sport keys supported by this function.
- * IMPORTANT: 'all' is a special routing value handled in the main handler.
- * AFL is included; NBA routes through basketball fetcher and is not listed
- * separately since its records carry sport='basketball' in the DB.
- * Boxing and Esports are canonical registry sports — both use TheSportsDB as
- * primary provider with API-Sports as secondary.
+ * Canonical 13 sport keys supported by this function.
+ *
+ * IMPORTANT:
+ *   - 'all' is a special routing value handled in the main handler.
+ *   - formula1 and afl are REMOVED from production pipeline.
+ *     They are NOT in the PredictXta canonical 13-sport registry.
+ *     Any request for formula1/afl is rejected with a 400 error.
+ *   - NBA routes through basketball fetcher; records carry sport='basketball'.
  */
 const ALL_SPORTS = [
   'football', 'basketball', 'tennis', 'baseball', 'hockey',
   'rugby', 'handball', 'volleyball', 'american-football',
-  'cricket', 'mma', 'boxing', 'esports', 'formula1', 'afl',
+  'cricket', 'mma', 'boxing', 'esports',
 ] as const;
+
+/** Sports that were removed from the registry and must be rejected at ingestion */
+const REMOVED_SPORTS = new Set(['formula1', 'formula-1', 'f1', 'afl', 'australian-football']);
+
 type SportKey = typeof ALL_SPORTS[number] | 'all';
 
 // ─── TheSportsDB rate-limit semaphore ─────────────────────────────────────────
@@ -1306,6 +1289,18 @@ Deno.serve(async (req: Request) => {
         'Prefer midnight-preload stage=fixtures which invokes fetch-matches per sport in parallel.');
     }
 
+    // ── PHASE 3 GUARD: reject removed/unsupported sports at ingestion ──────
+    // formula1 and afl are NOT in the canonical 13-sport registry.
+    // They must never enter production data pipelines.
+    if (REMOVED_SPORTS.has(sport)) {
+      console.warn(`[fetch-matches] Rejected unsupported sport: ${sport}`);
+      return secureErrorResponse(
+        `Sport '${sport}' is not in the PredictXta canonical 13-sport registry. ` +
+        'Supported sports: ' + ALL_SPORTS.join(', '),
+        400,
+      );
+    }
+
     console.log(`fetch-matches v5.2: sport=${sport} mode=${mode} key=${apiKey.substring(0, 8)}...`);
     const fetchStart = Date.now();
 
@@ -1325,8 +1320,9 @@ Deno.serve(async (req: Request) => {
     if (sport === 'mma'               || sport === 'all') apiSportsFetchers.push(fetchMMA(mode, apiKey));
     if (sport === 'boxing'            || sport === 'all') apiSportsFetchers.push(fetchBoxing(mode, apiKey));
     if (sport === 'esports'           || sport === 'all') apiSportsFetchers.push(fetchEsports(mode, apiKey));
-    if (sport === 'afl'               || sport === 'all')
-      apiSportsFetchers.push(fetchApiSportsGeneric(mode, apiKey, API_AFL_BASE, 'afl', americanFootballStatus));
+    // NOTE: afl and formula1 are removed from production pipeline.
+    // They are intentionally absent from the routing below.
+    // Any request with sport=afl or sport=formula1 is rejected above.
     // NBA alias: routes through basketball fetcher; records stored as sport='basketball'
     if (sport === 'nba') apiSportsFetchers.push(fetchBasketball(mode, apiKey));
 
@@ -1334,9 +1330,8 @@ Deno.serve(async (req: Request) => {
 
     // ── TSDB-only fetchers (sequential, throttled) ─────────────────────────
     const tsdbRows: Record<string, unknown>[] = [];
-    if (sport === 'cricket'        || sport === 'all')   tsdbRows.push(...await fetchCricket(mode));
-    if (sport === 'formula1'       || sport === 'f1' || sport === 'formula-1' || sport === 'all')
-      tsdbRows.push(...await fetchFormula1(mode));
+    if (sport === 'cricket' || sport === 'all') tsdbRows.push(...await fetchCricket(mode));
+    // formula1 is REMOVED from production pipeline — not fetched.
 
 
     // ── Merge all results ──────────────────────────────────────────────────
@@ -1383,7 +1378,7 @@ Deno.serve(async (req: Request) => {
 
     if (inserted > 0) invalidateSyncCache('fetch-matches').catch(() => {});
 
-    // Sport breakdown across ALL_SPORTS (now includes 'boxing', 'esports', 'afl')
+    // Sport breakdown across ALL_SPORTS (canonical 13 sports)
     const breakdown: Record<string, number> = {};
     for (const sp of ALL_SPORTS) breakdown[sp] = allRows.filter((r) => r.sport === sp).length;
 
