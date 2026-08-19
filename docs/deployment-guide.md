@@ -26,9 +26,12 @@ FIREBASE_PROJECT_ID
 FIREBASE_DATABASE_URL
 FIREBASE_MESSAGING_SENDER_ID
 FIREBASE_APP_ID
-OPENAI_API_KEY          # GPT-4 predictions
-GEMINI_API_KEY          # Gemini predictions
-Groq_API_Key            # Groq/LLaMA predictions
+OPENAI_API_KEY          # GPT-5.5 (primary)
+ANTHROPIC_API_KEY       # Claude (secondary)
+Gemini_API_Key          # Gemini 2.5 Flash (tertiary)
+Groq_API                # Meta Llama 4 via Groq (fallback)
+APPLE_SHARED_SECRET     # IAP receipt verification (Apple)
+GOOGLE_PLAY_SERVICE_ACCOUNT_JSON  # IAP verification (Google Play)
 ```
 
 ---
@@ -111,7 +114,7 @@ eas submit --platform android --profile production
 
 **Package name:** `com.predictxta.sports`  
 **Min SDK:** 24 (Android 7.0)  
-**Target SDK:** 35 (Android 15)
+**Target SDK:** 36 (Android 16) — required for Google Play by August 31, 2026
 
 ---
 
@@ -268,22 +271,55 @@ The in-app disclaimer must be visible on:
 
 ---
 
-## 12. Sports Coverage (v2.0 — 13 verified sports)
+## 12. Expo SDK 54 Upgrade Notes (August 2026)
 
-**API-Sports quota-consuming (10 sports):**
-football, basketball, hockey, handball, volleyball, rugby, baseball, american-football, mma, afl
+### What changed from SDK 53 → 54:
+- `targetSdkVersion` updated from 35 → **36** in `app.json` — required for Google Play (deadline: Aug 31, 2026)
+- `sdkVersion: "54.0.0"` declared in `app.json`
+- EAS build profiles all pin `"image": "latest"` to get the Expo 54 build image with NDK for API 36
+- `reactCompiler: false` set in `experiments` (opt-in in SDK 54; disabled until codebase is validated)
+- CI `deploy.yml` now validates `targetSdkVersion >= 36` and `sdkVersion` starts with `54`
 
-**TheSportsDB free tier (3 sports):**
-tennis, cricket, formula1
+### To apply the SDK upgrade locally:
+```bash
+# Upgrade expo and all linked packages:
+npx expo install expo@^54.0.0 --fix
 
-**Removed (9 unsupported sports):**
-boxing, motorsports, table-tennis, badminton, esports, snooker, darts, cycling, athletics
+# Verify no peer-dep conflicts:
+npx expo-doctor
 
-**Expected daily API quota:** ~3,100 calls/day (out of 7,000 limit — 57% headroom at baseline)
+# TypeScript check:
+npx tsc --noEmit
+
+# Trigger production AAB build targeting API 36:
+eas build --platform android --profile production
+```
+
+### Verify AAB targets API 36 after build:
+```bash
+bundletool build-apks --bundle=app.aab --output=app.apks --mode=universal
+unzip -p app.apks universal.apk | aapt2 dump badging - | grep targetSdkVersion
+# Expected: targetSdkVersion:'36'
+```
 
 ---
 
-## 13. Bundle Identifier Note
+## 13. Sports Coverage (v3.0 — 13 canonical sports)
+
+**API-Sports quota-consuming (11 sports):**
+football, basketball, hockey, handball, volleyball, rugby, baseball, american-football, mma, boxing, esports
+
+**TheSportsDB free tier — 0 API-Sports quota (2 sports):**
+tennis, cricket
+
+**Removed (not in canonical registry):**
+formula1, afl, table-tennis, badminton, snooker, darts, cycling, athletics, motorsports
+
+**Expected daily API quota:** ~3,240 calls/day (out of 7,000 limit — 54% headroom at baseline)
+
+---
+
+## 14. Bundle Identifier Note
 
 Both iOS and Android share the same package name: **`com.predictxta.sports`**
 
