@@ -33,7 +33,8 @@ const COIN_KEY = 'predictxta_coin_balance_v1';
 const SPORT_PREFS_KEY = '@predictxta/sport_prefs';
 
 // ─── Outdoor sports — show weather badge ────────────────────────────────────
-const OUTDOOR_SPORTS = new Set(['football', 'soccer', 'rugby', 'cricket', 'baseball', 'american-football', 'american_football', 'athletics', 'cycling', 'afl']);
+// Canonical 13 sports only — afl, athletics, cycling removed (not in registry)
+const OUTDOOR_SPORTS = new Set(['football', 'soccer', 'rugby', 'cricket', 'baseball', 'american-football', 'american_football']);
 
 const WEATHER_CONDITIONS = [
   { label: 'Clear', emoji: '☀️', detail: 'Ideal conditions', color: '#F59E0B' },
@@ -353,11 +354,12 @@ const ss = StyleSheet.create({
 
 // ─── Sport Navigation Rail ────────────────────────────────────────────────────
 // ─── Sport Spotlight — AFL + top sports quick-nav cards ─────────────────────
+// Canonical 13 sports only — afl replaced with mma (afl not in registry)
 const SPOTLIGHT_SPORTS = [
   { key: 'football',   label: 'Football',   emoji: '⚽', accent: '#6EDC1F' },
   { key: 'basketball', label: 'Basketball', emoji: '🏀', accent: '#F97316' },
   { key: 'rugby',      label: 'Rugby',      emoji: '🏉', accent: '#34D399' },
-  { key: 'afl',        label: 'AFL',        emoji: '🏈', accent: '#00B140' },
+  { key: 'mma',        label: 'MMA / UFC',  emoji: '🥊', accent: '#EF4444' },
 ];
 
 function SportSpotlight({ C, router, liveMatches }: {
@@ -459,10 +461,21 @@ function ForYouCard({ rec, C, onPress }: { rec: MatchRecommendation; C: AppColor
   const confColor = prediction ? getConfidenceColor(prediction.confidence) : C.primary;
   const abbr = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
+  // Canonical 13 sports only — afl, formula1 removed from registry
   const SPORT_EMOJI: Record<string, string> = {
-    football: '⚽', basketball: '🏀', tennis: '🎾', cricket: '🏏',
-    mma: '🥊', baseball: '⚾', hockey: '🏒', rugby: '🏉', afl: '🏉',
-    volleyball: '🏐', handball: '🤾', 'american-football': '🏈', formula1: '🏎️',
+    football:            '⚽',
+    basketball:          '🏀',
+    tennis:              '🎾',
+    cricket:             '🏏',
+    mma:                 '🥊',
+    boxing:              '🥊',
+    baseball:            '⚾',
+    hockey:              '🏒',
+    rugby:               '🏉',
+    volleyball:          '🏐',
+    handball:            '🤾',
+    'american-football': '🏈',
+    esports:             '🎮',
   };
 
   const reasonLabels: Record<string, string> = {
@@ -572,10 +585,21 @@ interface ExpertTip {
 }
 
 function ExpertTipRow({ tip, C }: { tip: ExpertTip; C: AppColors }) {
+  // Canonical 13 sports only — afl, formula1 removed
   const SPORT_EMOJI: Record<string, string> = {
-    football: '⚽', basketball: '🏀', tennis: '🎾', mma: '🥊', baseball: '⚾',
-    hockey: '🏒', rugby: '🏉', afl: '🏉', cricket: '🏏', volleyball: '🏐',
-    handball: '🤾', 'american-football': '🏈', formula1: '🏎️',
+    football:            '⚽',
+    basketball:          '🏀',
+    tennis:              '🎾',
+    cricket:             '🏏',
+    mma:                 '🥊',
+    boxing:              '🥊',
+    baseball:            '⚾',
+    hockey:              '🏒',
+    rugby:               '🏉',
+    volleyball:          '🏐',
+    handball:            '🤾',
+    'american-football': '🏈',
+    esports:             '🎮',
   };
   const STATUS = {
     won: { color: '#22C55E', label: '✓ WON', bg: '#22C55E18' },

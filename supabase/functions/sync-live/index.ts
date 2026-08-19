@@ -2,6 +2,11 @@
 /**
  * sync-live — Dedicated live match sync (runs every 30–60 seconds)
  *
+ * Phase 3 update:
+ *  ✓ formula1, afl and all removed sports purged from targetSports defaults
+ *    and from the fetchers dispatch table.
+ *  ✓ Only canonical 13-sport keys are accepted.
+ *
  * Fetches ONLY live matches from API-Football + TheSportsDB to keep
  * in-progress scores, minutes, and statuses fresh in the DB.
  * Much faster than fetch-matches (live=all only, no today's fixtures).
@@ -14,6 +19,14 @@
  * to users who have followed those matches via both Expo Push and FCM.
  *
  * Intended invocation schedule: every 45 seconds via cron or client polling.
+ *
+ * Canonical 13 sports supported for live:
+ *   football, basketball, hockey, handball, volleyball, rugby, baseball,
+ *   american-football, mma, tennis (TSDB), cricket (TSDB),
+ *   boxing (TSDB), esports (TSDB)
+ *
+ * Removed (not in canonical registry — will return HTTP 400 if requested):
+ *   formula1, afl
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -28,9 +41,9 @@ const API_RUGBY_BASE      = 'https://v1.rugby.api-sports.io';
 const API_BASEBALL_BASE   = 'https://v1.baseball.api-sports.io';
 const API_AMERICAN_BASE   = 'https://v1.american-football.api-sports.io';
 const API_MMA_BASE        = 'https://v1.mma.api-sports.io';
-const API_NBA_BASE        = 'https://v2.nba.api-sports.io';
-const API_FORMULA1_BASE   = 'https://v1.formula-1.api-sports.io';
-const API_AFL_BASE        = 'https://v1.afl.api-sports.io';
+// NOTE: API_NBA_BASE, API_FORMULA1_BASE, API_AFL_BASE intentionally removed.
+// formula1 and afl are NOT in the PredictXta canonical 13-sport registry.
+// NBA routes through the basketball fetcher (sport='basketball').
 
 // TheSportsDB v2 base (no key in path — uses Bearer header for paid tier)
 const TSDB_V2_BASE = 'https://www.thesportsdb.com/api/v2/json';
@@ -40,14 +53,22 @@ function tsdbV2Headers(): Record<string, string> {
   return {};
 }
 
-// v2 sport slug mapping for /livescore/{sport} — supported sports only
+// v2 sport slug mapping for /livescore/{sport} — canonical 13 sports only
+// formula1 and afl are REMOVED from the registry and must not appear here.
 const TSDB_V2_SPORT_SLUGS: Record<string, string> = {
-  football: 'soccer', basketball: 'basketball', tennis: 'tennis',
-  cricket: 'cricket', baseball: 'baseball', hockey: 'ice_hockey',
-  rugby: 'rugby', 'american-football': 'american_football',
-  mma: 'mma', handball: 'handball',
-  volleyball: 'volleyball', formula1: 'motorsport',
-  afl: 'australian_football',
+  football:           'soccer',
+  basketball:         'basketball',
+  tennis:             'tennis',
+  cricket:            'cricket',
+  baseball:           'baseball',
+  hockey:             'ice_hockey',
+  rugby:              'rugby',
+  'american-football':'american_football',
+  mma:                'mma',
+  boxing:             'boxing',
+  handball:           'handball',
+  volleyball:         'volleyball',
+  esports:            'esports',
 };
 
 // Legacy v1 key accessor kept ONLY for non-livescore v1 endpoints
@@ -364,10 +385,21 @@ async function sendGoalAlerts(
 }
 
 function getSportEmoji(sport: string): string {
+  // Only canonical 13 sports — formula1 and afl removed
   const map: Record<string, string> = {
-    football: '⚽', basketball: '🏀', tennis: '🎾', cricket: '🏸',
-    mma: '🥊', baseball: '⚾', hockey: '🏒', rugby: '🏉', volleyball: '🏐',
-    handball: '🤾', 'american-football': '🏈', afl: '🏈',
+    football:            '⚽',
+    basketball:          '🏀',
+    tennis:              '🎾',
+    cricket:             '🏏',
+    baseball:            '⚾',
+    hockey:              '🏒',
+    rugby:               '🏉',
+    'american-football': '🏈',
+    mma:                 '🥊',
+    boxing:              '🥊',
+    volleyball:          '🏐',
+    handball:            '🤾',
+    esports:             '🎮',
   };
   return map[sport?.toLowerCase()] ?? '🏆';
 }
@@ -584,7 +616,20 @@ Deno.serve(async (req: Request) => {
     // Parse body — optional sports list to restrict sync scope
     let body: { sports?: string[]; sendAlerts?: boolean } = {};
     try { body = await req.json(); } catch { /* defaults */ }
-    const targetSports: string[] = body.sports ?? ['football', 'basketball', 'hockey', 'tennis', 'cricket', 'afl'];
+    // Default target sports: all 13 canonical live-capable sports.
+    // formula1 and afl are REMOVED and must NEVER appear in this list.
+    const REMOVED_SPORTS_SYNC = new Set(['formula1', 'formula-1', 'f1', 'afl', 'australian-football']);
+    const rawSports: string[] = body.sports ?? [
+      'football', 'basketball', 'hockey', 'tennis', 'cricket',
+      'handball', 'volleyball', 'rugby', 'baseball', 'american-football',
+      'mma', 'boxing', 'esports',
+    ];
+    // Reject any removed/unsupported sports in the request body
+    const rejectedSports = rawSports.filter(s => REMOVED_SPORTS_SYNC.has(s));
+    if (rejectedSports.length > 0) {
+      console.warn(`[sync-live] Rejected removed sports in request: ${rejectedSports.join(', ')}`);
+    }
+    const targetSports: string[] = rawSports.filter(s => !REMOVED_SPORTS_SYNC.has(s));
     const sendAlerts = body.sendAlerts !== false; // default true
 
     console.log(`[sync-live] syncing: ${targetSports.join(',')} sendAlerts=${sendAlerts} firebase=${!!firebaseDbUrl}`);
@@ -724,31 +769,14 @@ Deno.serve(async (req: Request) => {
           source_provider: 'api-sports',
         })).catch(() => fetchLiveTsdb('mma'))
       );
-    if (targetSports.includes('formula1') || targetSports.includes('formula-1'))
-      fetchers.push(fetchLiveTsdb('formula1'));
-    // AFL — Australian Football League via dedicated sub-domain
-    if (targetSports.includes('afl'))
-      fetchers.push(fetchLiveApiSports(API_AFL_BASE, 'afl', apiKey, (g: any) => ({
-        external_id: `afl-${g.game?.id ?? g.id}`,
-        sport: 'afl',
-        home_team: g.teams?.home?.name ?? '',
-        away_team: g.teams?.away?.name ?? '',
-        home_score: g.scores?.home?.total ?? 0,
-        away_score: g.scores?.away?.total ?? 0,
-        status: 'live',
-        match_time: g.game?.date?.date
-          ? `${g.game.date.date}T${g.game.date.time ?? '00:00:00'}`
-          : new Date().toISOString(),
-        league: g.league?.name ?? 'AFL',
-        league_id: g.league?.id ?? null,
-        country: 'Australia',
-        home_logo: g.teams?.home?.logo || null,
-        away_logo: g.teams?.away?.logo || null,
-        league_logo: g.league?.logo || null,
-        minute: 0,
-        last_updated: new Date().toISOString(),
-        source_provider: 'api-sports',
-      })));
+    // Boxing — TSDB primary (no live sub-domain on API-Sports for boxing)
+    if (targetSports.includes('boxing'))
+      fetchers.push(fetchLiveTsdb('boxing'));
+    // Esports — TSDB primary
+    if (targetSports.includes('esports'))
+      fetchers.push(fetchLiveTsdb('esports'));
+    // NOTE: formula1 and afl are NOT in the canonical registry.
+    // They have been permanently removed from all live pipelines.
 
     const results = await Promise.allSettled(fetchers);
     const allRows: Record<string, unknown>[] = [];

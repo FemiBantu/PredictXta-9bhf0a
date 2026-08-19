@@ -692,7 +692,22 @@ Deno.serve(async (req: Request) => {
     if (!body) return secureErrorResponse('Empty body', 400);
 
     const match = body.match as MatchInput;
-    const userId = (body.user_id as string) ?? null;
+
+    // ── SECURITY: derive user identity from JWT, NEVER from body.user_id ─────
+    const authHeader = req.headers.get('Authorization');
+    let userId: string | null = null;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const { createClient: cc } = await import('https://esm.sh/@supabase/supabase-js@2');
+        const userClient = cc(
+          Deno.env.get('SUPABASE_URL') ?? '',
+          Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+          { global: { headers: { Authorization: authHeader } } },
+        );
+        const { data: { user } } = await userClient.auth.getUser();
+        userId = user?.id ?? null;
+      } catch { /* JWT verification failed — proceed as anonymous */ }
+    }
 
     if (userId) {
       const userGuard = applyUserRateLimit(userId, 'multi-predict', { max: 3, windowSec: 60, blockSec: 180 });

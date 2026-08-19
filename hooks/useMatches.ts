@@ -5,14 +5,14 @@ import { SPORT_API_KEY } from '@/constants/theme';
 import { Match } from '@/services/types';
 
 // ─── Normalize sport for DB queries ──────────────────────────────────────────
-// DB uses lowercase-hyphenated keys: 'american-football', 'table-tennis', 'formula1', etc.
-// UI uses Title Case: 'American Football', 'Formula 1', 'Table Tennis', 'All'
+// DB uses canonical lowercase-hyphenated keys: 'american-football', 'hockey', etc.
+// UI uses Title Case: 'American Football', 'Ice Hockey', 'All'
+// Only canonical 13 sports are supported — formula1 and afl removed.
 function toDbSportKey(sport: string): string {
   if (sport === 'All' || sport === 'all') return 'All';
   // SPORT_API_KEY maps all UI labels correctly, including:
   //   'American Football' → 'american-football'
-  //   'Formula 1'         → 'formula1'
-  //   'Table Tennis'      → 'table-tennis'
+  //   'Ice Hockey'        → 'hockey'
   const apiKey = SPORT_API_KEY[sport];
   if (apiKey && apiKey !== 'all') return apiKey;
   // Fallback: lowercase + hyphenate spaces
@@ -70,10 +70,10 @@ export function useMatches(initialSport = 'All') {
     }
     setSyncing(true);
     try {
-      // Map UI label → API-Sports key (e.g. 'Formula 1' → 'formula1')
+      // Map UI label → DB/API key for canonical 13 sports
       // SPORT_API_KEY['All'] returns 'all' which is valid for fetch-matches
       const rawKey = SPORT_API_KEY[sport] ?? sport.toLowerCase().replace(/\s+/g, '-');
-      // fetch-matches accepts 'all' + any specific sport key
+      // fetch-matches accepts 'all' + any canonical sport key
       const apiSport = rawKey as Parameters<typeof syncMatchesFromApi>[1];
       log(`Syncing from API | sport=${apiSport} force=${force}`);
       const result = await syncMatchesFromApi('today', apiSport);

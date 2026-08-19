@@ -768,8 +768,45 @@ async function recalculateExpertStats(supabase: ReturnType<typeof supabaseAdmin>
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
+// ─── Internal-only function ─────────────────────────────────────────────────
+// expert-promotion is an INTERNAL function. It is only callable by:
+//   1. pg_cron via invoke_edge_function (service-role Authorization + X-Job-Name)
+//   2. Admin users with server-verified admin_roles entry
+// Anonymous users and ordinary authenticated users are BLOCKED.
+
+import { requireInternalToken, requireAdmin, logSecurityEvent } from '../_shared/authGuard.ts';
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  // ── Authorization gate: internal cron or admin only ──────────────────────
+  const jobName = req.headers.get('X-Job-Name');
+  let authorizedAs: 'internal' | 'admin' | null = null;
+  let callerUserId: string | null = null;
+
+  // Try internal token first (cron jobs)
+  const { isInternal } = await requireInternalToken(req, 'expert-promotion');
+  if (isInternal) {
+    authorizedAs = 'internal';
+  } else {
+    // Try admin JWT
+    const { auth, isAdmin, errorResponse: adminErr } = await requireAdmin(req);
+    if (!adminErr && isAdmin) {
+      authorizedAs = 'admin';
+      callerUserId = auth?.userId ?? null;
+    } else {
+      // Block unauthorized access
+      await logSecurityEvent(
+        null, 'expert_promotion_unauthorized', 'blocked',
+        { path: req.url, method: req.method, job_name: jobName },
+        'high',
+      );
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized. This is an internal function.' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+  }
 
   const supabase = supabaseAdmin();
 
@@ -807,6 +844,10 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    await logSecurityEvent(
+      callerUserId, `expert_promotion_action_${action}`, 'success',
+      { action, authorized_as: authorizedAs }, 'low',
+    );
     return new Response(
       JSON.stringify({ error: `Unknown action: ${action}. Supported: check_promotion, promote, daily_review, settle_slip, settle_daily, recalculate` }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
