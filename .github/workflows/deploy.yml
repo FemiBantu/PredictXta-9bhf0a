@@ -356,6 +356,81 @@ jobs:
           fi
           echo "✓ Phase 5 prediction delivery verified"
 
+      # ── Phase 7 Production Launch Validation ────────────────────────────
+      - name: Phase 7 controlled release checks
+        run: |
+          echo "Verifying Phase 7 production launch infrastructure..."
+          FAILED=0
+
+          # 1. Feature flags service must exist
+          if [ ! -f "services/featureFlagService.ts" ]; then
+            echo "CRITICAL: featureFlagService.ts missing"
+            FAILED=1
+          else
+            echo "✓ featureFlagService.ts present"
+          fi
+
+          # 2. Analytics service must exist
+          if [ ! -f "services/analyticsService.ts" ]; then
+            echo "CRITICAL: analyticsService.ts missing"
+            FAILED=1
+          else
+            echo "✓ analyticsService.ts present"
+          fi
+
+          # 3. SLO service must exist
+          if [ ! -f "services/sloService.ts" ]; then
+            echo "CRITICAL: sloService.ts missing"
+            FAILED=1
+          else
+            echo "✓ sloService.ts present"
+          fi
+
+          # 4. Phase 7 release gate must exist
+          if [ ! -f "services/phase7ReleaseGate.ts" ]; then
+            echo "CRITICAL: phase7ReleaseGate.ts missing"
+            FAILED=1
+          else
+            echo "✓ phase7ReleaseGate.ts present"
+          fi
+
+          # 5. Operations runbook must exist
+          if [ ! -f "docs/phase7-operations-runbook.md" ]; then
+            echo "WARNING: phase7-operations-runbook.md missing"
+          else
+            echo "✓ phase7 operations runbook present"
+          fi
+
+          # 6. Analytics must not contain PII collection
+          if grep -n 'email.*analytics\|phone.*track\|password.*event' services/analyticsService.ts 2>/dev/null; then
+            echo "CRITICAL: PII detected in analytics service"
+            FAILED=1
+          else
+            echo "✓ No PII in analytics service"
+          fi
+
+          # 7. Feature flag kill switch defaults must all be 'true'
+          if grep -n 'FLAG_DEFAULTS' services/featureFlagService.ts | grep -q 'false'; then
+            echo "CRITICAL: Kill switch defaults to false — fail-safe violated"
+            FAILED=1
+          else
+            echo "✓ All kill switches default to enabled (fail-safe)"
+          fi
+
+          # 8. Migration 0012 must exist
+          if [ ! -f "supabase/functions/migrations/0012_phase7_production_launch.sql" ]; then
+            echo "WARNING: migration 0012 documentation missing"
+          else
+            echo "✓ migration 0012 present"
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "FAIL: Phase 7 controlled release checks failed."
+            exit 1
+          fi
+          echo "✓ Phase 7 controlled release verified"
+
       # ── Phase 6 Production Hardening Validation ──────────────────────────
       - name: Phase 6 production hardening checks
         run: |

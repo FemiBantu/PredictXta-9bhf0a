@@ -64,7 +64,7 @@ const SPORT_GATE_CONFIGS: Record<string, SportGateConfig> = {
   volleyball:        { drawPossible: false, ouUnit: 'sets',   ouMin: 2.5, ouMax: 4.5,  goalsMin: 0, goalsMax: 5 },
   esports:           { drawPossible: false, ouUnit: 'maps',   ouMin: 1.5, ouMax: 3.5,  goalsMin: 0, goalsMax: 3 },
   'american-football':{ drawPossible: false, ouUnit: 'points', ouMin: 30,  ouMax: 70,  goalsMin: 0, goalsMax: 50 },
-  formula1:          { drawPossible: false, ouUnit: 'pos.',   ouMin: 1,   ouMax: 5,    goalsMin: 0, goalsMax: 20 },
+  // formula1 intentionally removed — not in canonical 13-sport registry
 };
 
 function getSportConfig(sport?: string | null): SportGateConfig {
