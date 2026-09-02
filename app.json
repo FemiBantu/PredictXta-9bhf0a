@@ -218,7 +218,7 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": false,
+      "reactCompiler": true,
       "sdkVersionNote": "SDK 54 — meets Google Play API 36 requirement (deadline Aug 31 2026). Upgraded from SDK 53."
     },
     "extra": {
