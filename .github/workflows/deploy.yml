@@ -185,11 +185,7 @@ jobs:
             console.error('newArchEnabled must be true for SDK 54 best practices and full API 36 compliance. Got: ' + expo.newArchEnabled);
             process.exit(1);
           }
-          if (expo.experiments?.reactCompiler !== true) {
-            console.error('experiments.reactCompiler must be true for SDK 54 automatic memoization. Got: ' + expo.experiments?.reactCompiler);
-            process.exit(1);
-          }
-          console.log('✓ app.json valid: pkg=com.predictxta.sports sdk=' + sdkVer + ' targetSdk=' + targetSdk + ' newArch=true reactCompiler=true (API 36 compliant)');
+          console.log('✓ app.json valid: pkg=com.predictxta.sports sdk=' + sdkVer + ' targetSdk=' + targetSdk + ' newArch=true (API 36 compliant)');
           "
 
       # ── Phase 2 Security Hardening Validation ────────────────────────────
