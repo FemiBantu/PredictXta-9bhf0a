@@ -1,0 +1,56 @@
+-- =============================================================================
+-- Migration README
+-- PredictXta — Supabase Migrations Guide
+-- =============================================================================
+--
+-- AUTHORITATIVE SCHEMA
+-- These migration files are the authoritative production schema definition.
+-- Scripts in /scripts/ are utilities, monitoring views, and one-time helpers.
+--
+-- MIGRATION ORDER
+-- 0001_extensions.sql        — PostgreSQL extensions (pgcrypto, pg_trgm)
+-- 0002_core_tables.sql       — user_profiles, matches, odds, predictions + indexes
+-- 0003_notifications_chat.sql— notifications, chat_rooms, chat_messages
+-- 0004_ai_models.sql         — model_registry, ai_audit_logs, prediction_outcomes, model_performance_log
+-- 0005_subscriptions_coins.sql — vip_subscriptions, user_coins, purchase_audit_log
+-- 0006_functions_triggers.sql— handle_new_user, add_user_coins, auto_cleanup, auto_resolve
+-- 0007_supporting_tables.sql — news_articles, league_standings, feed_cache_meta, ai_intelligence_cache
+--
+-- HOW TO APPLY (clean database)
+-- Run each file in numerical order via Supabase Dashboard → SQL Editor,
+-- or using the Supabase CLI:
+--   supabase db push
+--
+-- SAFETY
+-- All migrations use CREATE TABLE IF NOT EXISTS and DO $$ blocks for policy
+-- creation — safe to run against an existing production database.
+-- They will not drop or recreate existing objects.
+--
+-- ADDITIONAL TABLES
+-- The following tables exist in production but are created by other scripts
+-- (not yet migrated here; see scripts/ directory for their definitions):
+--   cron_execution_log      — scripts/setup-cron-schedules.sql
+--   cron_retry_queue        — scripts/setup-cron-schedules.sql
+--   cron_job_locks          — scripts/setup-cron-schedules.sql
+--   pipeline_alerts         — scripts/setup-cron-schedules.sql
+--   pipeline_schedule       — scripts/setup-cron-schedules.sql
+--   match_events            — (created via dashboard)
+--   player_stats            — (created via dashboard)
+--   highlights              — (created via dashboard)
+--   expert_profiles         — (created via dashboard)
+--   expert_slips            — (created via dashboard)
+--   expert_tips             — (created via dashboard)
+--   challenge_picks         — (created via dashboard)
+--   challenge_results       — (created via dashboard)
+--   daily_challenges        — (created via dashboard)
+--   admin_roles             — (created via dashboard)
+--
+-- CANONICAL SPORTS (13)
+-- The 13 active production sports are:
+--   football, basketball, tennis, cricket, baseball,
+--   hockey, rugby, american-football, mma, boxing,
+--   volleyball, handball, esports
+--
+-- REMOVED SPORTS (must not appear in active production code)
+--   formula1, afl, badminton, table-tennis, snooker, darts,
+--   cycling, athletics, motorsports, squash

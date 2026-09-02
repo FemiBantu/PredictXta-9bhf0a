@@ -113,16 +113,17 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Update model_performance_log with rolling accuracy per version
+    // Update model_performance_log + calibration_log with rolling accuracy per sport
     try {
       const today = new Date().toISOString().split('T')[0];
+      const windowStart = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
       const { data: perfData } = await supabase
         .from('prediction_outcomes')
         .select('sport, is_correct, brier_score, confidence_at_prediction, prediction_version')
-        .gte('resolved_at', new Date(Date.now() - 30 * 24 * 3600_000).toISOString());
+        .gte('resolved_at', windowStart);
 
       if (perfData && perfData.length > 0) {
-        // Group by sport for model_performance_log
+        // Group by sport for model_performance_log + calibration_log
         const sportMap = new Map<string, { total: number; correct: number; brierSum: number; confSum: number }>();
         for (const r of perfData as Array<{ sport: string; is_correct: boolean; brier_score: number; confidence_at_prediction: number }>) {
           const s = r.sport ?? 'all';
@@ -135,17 +136,50 @@ Deno.serve(async (req: Request) => {
 
         for (const [sport, stats] of sportMap) {
           if (stats.total < 10) continue;
-          const accuracy = stats.correct / stats.total;
+          const accuracy     = stats.correct / stats.total;
+          const accuracyPct  = Math.round(accuracy * 10000) / 100;
+          const brierAvg     = Math.round((stats.brierSum / stats.total) * 1000000) / 1000000;
+          const confAvg      = Math.round(stats.confSum / stats.total);
+          const driftMag     = Math.abs((confAvg / 100) - accuracy);
+          const driftDetected = driftMag > 0.15;
+
+          // model_performance_log
           await supabase.from('model_performance_log').upsert({
-            logged_date: today,
-            model_id: 'quantitative-ensemble-v1',
+            logged_date:         today,
+            model_id:            'quantitative-ensemble-v1',
             sport,
-            total_predictions: stats.total,
+            total_predictions:   stats.total,
             correct_predictions: stats.correct,
-            accuracy_pct: Math.round(accuracy * 10000) / 100,
+            accuracy_pct:        accuracyPct,
             avg_hallucination_score: 0,
-            avg_confidence: Math.round(stats.confSum / stats.total),
+            avg_confidence:      confAvg,
           }, { onConflict: 'logged_date,model_id,sport', ignoreDuplicates: false });
+
+          // Phase 4: calibration_log per sport
+          await supabase.from('calibration_log').upsert({
+            logged_date:         today,
+            model_id:            'quantitative-ensemble-v1',
+            sport,
+            n_predictions:       stats.total,
+            n_correct:           stats.correct,
+            accuracy_pct:        accuracyPct,
+            brier_score_avg:     brierAvg,
+            confidence_avg:      confAvg,
+            drift_detected:      driftDetected,
+            drift_magnitude:     Math.round(driftMag * 10000) / 10000,
+            window_days:         30,
+          }, { onConflict: 'logged_date,model_id,sport', ignoreDuplicates: false });
+
+          // Emit governance alert if significant drift detected
+          if (driftDetected && driftMag > 0.20) {
+            await supabase.from('ai_governance_log').insert({
+              event_type:  'calibration_drift',
+              severity:    driftMag > 0.30 ? 'warning' : 'info',
+              model_id:    'quantitative-ensemble-v1',
+              sport,
+              details: { drift_magnitude: driftMag, confidence_avg: confAvg, accuracy_pct: accuracyPct, n: stats.total },
+            }).catch(() => {});
+          }
         }
       }
     } catch { /* non-blocking */ }
