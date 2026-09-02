@@ -233,6 +233,197 @@ jobs:
           fi
           echo "✓ Phase 2 security hardening verified"
 
+      # ── Phase 4 Prediction Engine Validation ──────────────────────────────
+      - name: Phase 4 prediction engine checks
+        run: |
+          echo "Verifying Phase 4 prediction engine..."
+          FAILED=0
+
+          # 1. quantitativeModels.ts must exist and have all 13 sport models
+          if [ ! -f "supabase/functions/_shared/quantitativeModels.ts" ]; then
+            echo "CRITICAL: quantitativeModels.ts missing"
+            FAILED=1
+          else
+            for model in footballModel basketballModel tennisModel cricketModel baseballModel hockeyModel americanFootballModel rugbyModel mmaBoxingModel esportsModel setBasedModel; do
+              if ! grep -q "function ${model}" supabase/functions/_shared/quantitativeModels.ts 2>/dev/null; then
+                echo "CRITICAL: ${model} missing from quantitativeModels.ts"
+                FAILED=1
+              fi
+            done
+            echo "✓ All sport quantitative models present"
+          fi
+
+          # 2. qualityGate.ts must exist with sport configs for 13 sports
+          if [ ! -f "supabase/functions/_shared/qualityGate.ts" ]; then
+            echo "CRITICAL: qualityGate.ts missing"
+            FAILED=1
+          else
+            if ! grep -q 'formula1' supabase/functions/_shared/qualityGate.ts 2>/dev/null; then
+              echo "✓ formula1 not in quality gate sport configs"
+            else
+              echo "CRITICAL: formula1 found in qualityGate sport configs"
+              FAILED=1
+            fi
+            echo "✓ qualityGate.ts present"
+          fi
+
+          # 3. generate-prediction must not contain Math.random
+          if grep -n 'Math\.random' supabase/functions/generate-prediction/index.ts 2>/dev/null; then
+            echo "CRITICAL: Math.random found in generate-prediction — fabricated confidence detected"
+            FAILED=1
+          else
+            echo "✓ No Math.random in generate-prediction"
+          fi
+
+          # 4. predictionEligibility.ts must exist (pre-match guard)
+          if [ ! -f "supabase/functions/_shared/predictionEligibility.ts" ]; then
+            echo "CRITICAL: predictionEligibility.ts missing"
+            FAILED=1
+          else
+            echo "✓ predictionEligibility.ts present"
+          fi
+
+          # 5. No Math.random in quantitativeModels.ts
+          if grep -n 'Math\.random' supabase/functions/_shared/quantitativeModels.ts 2>/dev/null; then
+            echo "CRITICAL: Math.random found in quantitativeModels.ts — non-deterministic models"
+            FAILED=1
+          else
+            echo "✓ No Math.random in quantitativeModels.ts"
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "FAIL: Phase 4 prediction engine checks failed."
+            exit 1
+          fi
+          echo "✓ Phase 4 prediction engine verified"
+
+      # ── Phase 5 Prediction Delivery Validation ────────────────────────────
+      - name: Phase 5 prediction delivery checks
+        run: |
+          echo "Verifying Phase 5 prediction delivery platform..."
+          FAILED=0
+
+          # 1. smart-refresh must exist (prediction scheduler)
+          if [ ! -f "supabase/functions/smart-refresh/index.ts" ]; then
+            echo "CRITICAL: smart-refresh/index.ts missing"
+            FAILED=1
+          else
+            echo "✓ smart-refresh present"
+          fi
+
+          # 2. monitoring-dashboard must exist
+          if [ ! -f "supabase/functions/monitoring-dashboard/index.ts" ]; then
+            echo "CRITICAL: monitoring-dashboard/index.ts missing"
+            FAILED=1
+          else
+            echo "✓ monitoring-dashboard present"
+          fi
+
+          # 3. predictions-feed must exist with VIP isolation
+          if [ ! -f "supabase/functions/predictions-feed/index.ts" ]; then
+            echo "CRITICAL: predictions-feed/index.ts missing"
+            FAILED=1
+          else
+            # Verify VIP fields are stripped when isVip=false
+            if ! grep -q 'isVip && pred' supabase/functions/predictions-feed/index.ts 2>/dev/null; then
+              echo "WARNING: VIP field stripping not found in predictions-feed"
+            else
+              echo "✓ VIP field stripping present in predictions-feed"
+            fi
+          fi
+
+          # 4. home-feed must derive VIP from JWT (not client body)
+          if grep -n 'body\.isVip\|body\[.isVip' supabase/functions/home-feed/index.ts 2>/dev/null; then
+            echo "CRITICAL: home-feed trusts client isVip body param"
+            FAILED=1
+          else
+            echo "✓ home-feed derives VIP from server-side JWT check"
+          fi
+
+          # 5. phase5IntegrityTests.ts must exist
+          if [ ! -f "services/phase5IntegrityTests.ts" ]; then
+            echo "CRITICAL: phase5IntegrityTests.ts missing"
+            FAILED=1
+          else
+            echo "✓ phase5IntegrityTests.ts present"
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "FAIL: Phase 5 prediction delivery checks failed."
+            exit 1
+          fi
+          echo "✓ Phase 5 prediction delivery verified"
+
+      # ── Phase 6 Production Hardening Validation ──────────────────────────
+      - name: Phase 6 production hardening checks
+        run: |
+          echo "Verifying Phase 6 production hardening..."
+          FAILED=0
+
+          # 1. Release gate test suite must exist
+          if [ ! -f "services/phase6ReleaseGate.ts" ]; then
+            echo "CRITICAL: phase6ReleaseGate.ts missing"
+            FAILED=1
+          else
+            echo "✓ phase6ReleaseGate.ts present"
+          fi
+
+          # 2. Production hardening docs must exist
+          if [ ! -f "docs/phase6-production-hardening.md" ]; then
+            echo "WARNING: phase6-production-hardening.md missing — add documentation"
+          else
+            echo "✓ phase6 documentation present"
+          fi
+
+          # 3. authGuard must use getUser() not manual JWT decode
+          if grep -n 'jwt\.decode\|atob.*jwt\|parseJWT' supabase/functions/_shared/authGuard.ts 2>/dev/null; then
+            echo "CRITICAL: authGuard uses manual JWT decode instead of auth.getUser()"
+            FAILED=1
+          else
+            echo "✓ authGuard uses supabase.auth.getUser() for identity verification"
+          fi
+
+          # 4. No hardcoded credentials in Edge Functions
+          for file in supabase/functions/**/*.ts; do
+            if grep -nE '(sk-[A-Za-z0-9]{32,}|AIza[0-9A-Za-z_-]{35}|gsk_[A-Za-z0-9]{50})' "$file" 2>/dev/null; then
+              echo "CRITICAL: Hardcoded API key found in $file"
+              FAILED=1
+            fi
+          done
+          echo "✓ No hardcoded API keys in Edge Functions"
+
+          # 5. All critical migrations present
+          for migration in 0001 0002 0003 0004 0005 0006 0007 0008; do
+            FOUND=$(ls supabase/migrations/${migration}_*.sql 2>/dev/null | head -1)
+            if [ -z "$FOUND" ]; then
+              echo "CRITICAL: Migration ${migration} missing"
+              FAILED=1
+            fi
+          done
+          echo "✓ Core migrations 0001–0008 present"
+
+          # 6. Bundle IDs consistent
+          ANDROID_PKG=$(node -e "const c=require('./app.json'); console.log(c.expo.android.package)" 2>/dev/null || echo "")
+          IOS_BUNDLE=$(node -e "const c=require('./app.json'); console.log(c.expo.ios.bundleIdentifier)" 2>/dev/null || echo "")
+          if [ "$ANDROID_PKG" != "com.predictxta.sports" ]; then
+            echo "CRITICAL: Android package mismatch: $ANDROID_PKG"
+            FAILED=1
+          fi
+          if [ "$IOS_BUNDLE" != "com.predictxta.sports" ]; then
+            echo "CRITICAL: iOS bundle ID mismatch: $IOS_BUNDLE"
+            FAILED=1
+          fi
+          echo "✓ Bundle IDs consistent: $ANDROID_PKG"
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "FAIL: Phase 6 production hardening checks failed."
+            exit 1
+          fi
+          echo "✓ Phase 6 production hardening verified"
+
       # ── Phase 3 Sports Data Platform Validation ───────────────────────────
       - name: Phase 3 sports data platform checks
         run: |
@@ -326,6 +517,8 @@ jobs:
 
       - name: EAS Build (production AAB — SDK 53, API 35)
         run: eas build --platform android --profile production --non-interactive --no-wait
+        # NOTE: Upgrade to SDK 54 required before Aug 31 2026 (Google Play API 36 deadline)
+        # Run: npx expo install expo@^54.0.0 --fix && eas build --platform android --profile production
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

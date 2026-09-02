@@ -68,10 +68,39 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
     const sport  = body.sport  ?? url.searchParams.get('sport')  ?? 'all';
-    const isVip  = body.isVip  ?? url.searchParams.get('isVip')  === 'true';
-    const userId = body.userId ?? url.searchParams.get('userId') ?? null;
     const limit  = body.limit  ?? Number(url.searchParams.get('limit') ?? '12');
     const sportNorm = (sport !== 'all' && sport !== 'All') ? sport.toLowerCase() : null;
+
+    // ── SECURITY: derive VIP status and userId from JWT, NEVER from client body ─
+    // Clients cannot self-grant VIP access by passing isVip=true or userId in body.
+    // Phase 2/5 rule: all authorization is server-derived from the JWT subject.
+    let isVip  = false;
+    let userId: string | null = null;
+    const authHeader = req.headers.get('Authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const { createClient: _cc } = await import('https://esm.sh/@supabase/supabase-js@2');
+        const _userClient = _cc(
+          Deno.env.get('SUPABASE_URL') ?? '',
+          Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+          { global: { headers: { Authorization: authHeader } } },
+        );
+        const { data: { user } } = await _userClient.auth.getUser();
+        if (user?.id) {
+          userId = user.id;
+          // Derive VIP status from server-side subscription record
+          const _adminClient = _cc(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
+          const { data: sub } = await _adminClient
+            .from('vip_subscriptions')
+            .select('status, expires_at')
+            .eq('user_id', userId)
+            .eq('status', 'active')
+            .gte('expires_at', new Date().toISOString())
+            .maybeSingle();
+          isVip = !!sub;
+        }
+      } catch { /* JWT verification failed — anonymous access */ }
+    }
 
     console.log(`[home-feed] start | sport=${sport} isVip=${isVip} userId=${userId ? 'auth' : 'anon'}`);
 

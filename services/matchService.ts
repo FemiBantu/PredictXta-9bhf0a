@@ -79,13 +79,13 @@ function rowToMatch(row: Record<string, unknown>): Match {
   };
 }
 
-// ─── Supported sports type (13 verified sports only) ────────────────────────
-// Only these sports have verified API coverage. Removed: boxing, motorsports,
-// table-tennis, badminton, snooker, darts, cycling, athletics, esports.
+// ─── Supported sports type (canonical 13 sports) ────────────────────────────
+// Exactly 13 production sports from the canonical registry.
+// formula1 and afl are REMOVED and must never appear in production paths.
 export type SupportedSport =
   | 'football' | 'basketball' | 'tennis' | 'cricket' | 'baseball'
   | 'hockey' | 'rugby' | 'handball' | 'volleyball' | 'american-football'
-  | 'mma' | 'formula1' | 'afl' | 'all';
+  | 'mma' | 'boxing' | 'esports' | 'all';
 
 // Trigger the edge function to fetch fresh data from API-Football + TheSportsDB
 export async function syncMatchesFromApi(

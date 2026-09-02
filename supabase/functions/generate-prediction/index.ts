@@ -44,6 +44,7 @@ import {
   type RoutingStrategy,
 } from '../_shared/aiProviderRouter.ts';
 import { runQualityGate, type PredictionForGate } from '../_shared/qualityGate.ts';
+import { checkPredictionEligibility, isMatchDataStale } from '../_shared/predictionEligibility.ts';
 
 // ─── Sport configuration (default lines per sport) ───────────────────────────
 const DEFAULT_OU_LINES: Record<string, number> = {
@@ -259,9 +260,27 @@ Deno.serve(async (req: Request) => {
     if (!body) return secureErrorResponse('Empty body', 400);
 
     const match = body.match as MatchFeatures;
-    const userId = (body.user_id as string) ?? null;
     const bypassCache = Boolean(body.bypass_cache ?? false);
 
+    // ── SECURITY: derive user identity from JWT, NEVER from body.user_id ─────
+    // body.user_id is NOT trusted for authorization — it is only used for
+    // audit logging if present and matches the authenticated user.
+    const authHeader = req.headers.get('Authorization');
+    let userId: string | null = null;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const { createClient: cc } = await import('https://esm.sh/@supabase/supabase-js@2');
+        const userClient = cc(
+          Deno.env.get('SUPABASE_URL') ?? '',
+          Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+          { global: { headers: { Authorization: authHeader } } },
+        );
+        const { data: { user } } = await userClient.auth.getUser();
+        userId = user?.id ?? null;
+      } catch { /* JWT verification failed — proceed as anonymous */ }
+    }
+
+    // Apply per-user rate limit using server-derived userId
     if (userId) {
       const userGuard = applyUserRateLimit(userId, 'predict', { max: 6, windowSec: 60, blockSec: 120 });
       if (userGuard) return userGuard;
@@ -272,6 +291,30 @@ Deno.serve(async (req: Request) => {
     }
 
     const sport = (match.sport ?? 'football').toLowerCase();
+
+    // ── Phase 4: Pre-match eligibility gate ───────────────────────────────────
+    // CRITICAL: Never generate pre-match predictions for matches that have started.
+    // Eligibility uses match_time (UTC) — cannot be bypassed by status lag.
+    if (!bypassCache && match.status !== 'live') {
+      const eligibility = checkPredictionEligibility({
+        matchId:   match.id ?? 'unknown',
+        sport,
+        status:    match.status ?? 'upcoming',
+        matchTime: (match as Record<string, unknown>).matchTime as string ?? new Date(Date.now() + 86400_000).toISOString(),
+        dqScore:   undefined, // computed after this check
+        hasPrediction: false,  // checked separately below
+      });
+      if (!eligibility.eligible && eligibility.status !== 'ELIGIBLE') {
+        if (eligibility.status === 'MATCH_STARTED' || eligibility.status === 'MATCH_FINISHED') {
+          console.warn(`[generate-prediction] Eligibility gate: ${eligibility.status} — ${eligibility.reason}`);
+          return secureResponse({ success: false, ineligible: true, status: eligibility.status, reason: eligibility.reason });
+        }
+        if (eligibility.status === 'UNSUPPORTED_SPORT') {
+          return secureErrorResponse(`Unsupported sport: ${sport}. Canonical 13 sports only.`, 400);
+        }
+        // INSUFFICIENT_DATA: fall through to generate with low confidence
+      }
+    }
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',

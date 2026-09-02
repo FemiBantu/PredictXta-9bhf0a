@@ -375,6 +375,10 @@ function AppShell() {
               options={{ headerShown: false, animation: 'slide_from_right' }}
             />
             <Stack.Screen
+              name="admin-ai-monitor"
+              options={{ headerShown: false, animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
               name="accuracy"
               options={{ headerShown: false, animation: 'slide_from_right' }}
             />
