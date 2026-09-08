@@ -64,6 +64,7 @@ FUNCTIONS=(
   "send-push"
   "translate-content"
   "expert-promotion"
+  "vip-expiry-notifier"
 
   # Live & Streaming
   "firebase-live"

@@ -15,12 +15,18 @@
  *  On web we do the same OAuth redirect approach.
  *
  * Required configuration:
- *  - Apple Developer Console → Certificates → Sign In with Apple:
- *      Service ID: com.predictxta.app
- *      Return URL: https://<supabase-project>.supabase.co/auth/v1/callback
+ *  - Apple Developer Console → Identifiers:
+ *      App ID:     com.predictxta.sports  (iOS Bundle ID — used for native Sign In with Apple)
+ *                  Capabilities: Sign In with Apple ✓, Push Notifications ✓
+ *      Service ID: com.predictxta.app     (SEPARATE identifier for web/Android OAuth only)
+ *                  Domain:     osmkbrryalhtpnayosmk.backend.onspace.ai
+ *                  Return URL: https://osmkbrryalhtpnayosmk.backend.onspace.ai/auth/v1/callback
  *  - Supabase Dashboard → Auth → Providers → Apple:
- *      Enable, add Team ID, Key ID, Private Key, Bundle/Service ID
- *  - app.json → plugins → expo-apple-authentication (already added)
+ *      Enable, add Team ID, Key ID, Private Key (.p8)
+ *      Bundle ID (client_id for Service ID flow): com.predictxta.app
+ *  - app.json:
+ *      ios.bundleIdentifier: com.predictxta.sports  ← iOS canonical ID
+ *      ios.usesAppleSignIn: true
  */
 
 import { Platform } from 'react-native';
@@ -175,8 +181,9 @@ async function signInWithAppleOAuth(): Promise<AppleSignInResult> {
 // ─── Public entry point ───────────────────────────────────────────────────────
 /**
  * Sign in with Apple.
- * - iOS: uses native `expo-apple-authentication` dialog.
- * - Android/Web: falls back to OAuth web browser flow via Supabase.
+ * - iOS: uses native `expo-apple-authentication` dialog (Bundle ID: com.predictxta.sports).
+ * - Android/Web: falls back to OAuth web browser flow via Supabase
+ *   (uses Apple Service ID: com.predictxta.app as the OAuth client_id).
  */
 export async function signInWithApple(): Promise<AppleSignInResult> {
   if (Platform.OS === 'ios') {

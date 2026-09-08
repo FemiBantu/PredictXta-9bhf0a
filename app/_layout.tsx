@@ -480,6 +480,10 @@ function AppShell() {
               options={{ headerShown: false, animation: 'slide_from_right' }}
             />
             <Stack.Screen
+              name="subscription-management"
+              options={{ headerShown: false, animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
               name="trends"
               options={{ headerShown: false, animation: 'slide_from_right' }}
             />

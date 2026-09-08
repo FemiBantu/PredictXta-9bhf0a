@@ -32,7 +32,15 @@ export async function runFirebaseIntegrationCheck(): Promise<IntegrationCheckRes
     Constants.expoConfig?.extra?.eas?.projectId ??
     Constants.easConfig?.projectId;
 
-  if (!projectId || projectId === 'YOUR_EAS_PROJECT_ID' || projectId === 'predictxta-app') {
+  // EAS project IDs are UUIDs (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
+  // 'predictxta-app' is a Firebase project ID — not an EAS UUID — so we
+  // do NOT flag it as a placeholder here.
+  const isPlaceholder =
+    !projectId ||
+    projectId === 'YOUR_EAS_PROJECT_ID' ||
+    /^[A-Z_]+$/.test(projectId); // all-caps = unexpanded env var
+
+  if (isPlaceholder) {
     errors.push(
       '[Firebase] EAS projectId is a placeholder. ' +
       'Run `eas project:info` and update app.json → extra.eas.projectId and updates.url'
