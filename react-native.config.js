@@ -14,8 +14,12 @@
  *
  * Combined with:
  *  - metro.config.js resolveRequest shim (JS-level no-op)
- *  - app.json newArchEnabled: false (avoids New Architecture TurboModule issues)
+ *  - global-polyfills.js NativeUnimoduleProxy crash guard
  *  - expo-build-properties excludePackages (Gradle-level exclusion)
+ *
+ * NOTE: newArchEnabled is true (set in app.json) — New Architecture is active
+ * for SDK 54. The auto-linking overrides here are only for the OnSpace preview
+ * host environment, not for production EAS builds.
  */
 module.exports = {
   dependencies: {

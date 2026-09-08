@@ -72,6 +72,7 @@
       "icon": "./assets/logo.png",
       "minSdkVersion": 24,
       "targetSdkVersion": 36,
+      "compileSdkVersion": 36,
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#0A0F1E"
