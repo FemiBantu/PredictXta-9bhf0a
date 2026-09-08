@@ -1,44 +1,44 @@
 # PredictXta Play Store & App Store Submission Guide
 
+Updated: 2026-09-08 (Phase 2 — corrected to canonical bundle IDs)
+
+---
+
+## Canonical Application Identifiers
+
+| Platform | Bundle / Package ID     |
+|----------|------------------------|
+| Android  | `com.predictxta.sports` |
+| iOS      | `com.predictxta.sports` |
+
+> ✅ Both platforms share the same package name.
+> `com.predictxta.app` is reserved as the **Apple Service ID** for Sign In
+> with Apple web/Android OAuth only — not the iOS Bundle ID.
+
+---
+
 ## Pre-Submission Checklist
 
 ### 1. Firebase & Push Notifications
 
-**See `docs/FIREBASE_SETUP.md` for full Firebase setup.**
-
-Quick checklist:
-- [ ] Real `google-services.json` in project root (from Firebase Console)
-- [ ] Real `GoogleService-Info.plist` in project root (from Firebase Console)
-- [ ] `FIREBASE_SERVER_KEY` set in Supabase secrets
+- [ ] Real `google-services.json` (package: `com.predictxta.sports`) from Firebase Console
+- [ ] Real `GoogleService-Info.plist` (bundle ID: `com.predictxta.sports`) from Firebase Console
+- [ ] `FIREBASE_SERVER_KEY` and other secrets set in Supabase secrets vault
 - [ ] Production SHA-1 fingerprint added to Firebase Android app
-- [ ] APNs Auth Key uploaded to Firebase project (for iOS push)
+- [ ] APNs Auth Key (.p8) uploaded to Firebase project (iOS push)
 
 ### 2. EAS Project Configuration
 
 ```bash
-# 1. Login to EAS
 eas login
-
-# 2. Get your real project ID
-eas project:info
-# Copy the UUID from the output
-
-# 3. Update app.json and eas.json with the real UUID:
-#    app.json → extra.eas.projectId
-#    app.json → updates.url  (replace YOUR_EAS_PROJECT_ID)
-#    eas.json → no change needed (references app.json)
+eas project:info           # Confirm projectId = 9c9238ac-123c-4ff5-966d-b3a036b0d66a
+eas secret:list            # Verify GOOGLE_SERVICES_JSON, GOOGLE_SERVICES_PLIST set
 ```
 
 ### 3. Google Sign-In Configuration
 
-After EAS build generates production keystore:
-
 ```bash
-# Get production SHA-1
-eas credentials --platform android
-# Copy the "SHA-1 certificate fingerprint"
-# Add it to Firebase Console → Project Settings → Android app → SHA certificate fingerprints
-# Also add to Google Cloud Console → OAuth 2.0 Client → Android client → SHA-1
+eas credentials --platform android     # Copy SHA-1 → register in Google Cloud + Firebase
 ```
 
 ---
@@ -48,150 +48,90 @@ eas credentials --platform android
 ### Build Commands
 
 ```bash
-# Debug APK (for testing)
-eas build --platform android --profile development
-
-# Preview APK (for internal distribution)
-eas build --platform android --profile preview
-
-# Production AAB (for Play Store)
-eas build --platform android --profile production
-
-# Production APK (for direct download)
-eas build --platform android --profile production-apk
+eas build --platform android --profile development       # Debug APK
+eas build --platform android --profile preview           # Preview APK
+eas build --platform android --profile production        # Production AAB (Play Store)
+eas build --platform android --profile production-apk    # Production APK (sideload)
 ```
 
 ### Play Store Submission Steps
 
 #### 1. Create Play Console Entry
-1. Go to [play.google.com/console](https://play.google.com/console)
-2. Click **Create app**
-3. App name: **PredictXta - AI Sports Predictions**
-4. Default language: **English (United States)**
-5. App type: **App**
-6. Free or paid: **Free**
-7. Accept policies → Create app
+1. [play.google.com/console](https://play.google.com/console) → Create app
+2. App name: **PredictXta - AI Sports Predictions**
+3. Package: `com.predictxta.sports` (cannot be changed after first upload)
+4. Language: English (US), Type: App, Free
 
 #### 2. Store Listing
 
-**Short description (80 chars max):**
+**Short description (80 chars):**
 ```
-AI-powered sports predictions, live scores & expert tips for 21+ sports
+AI sports predictions, live scores & expert tips for 13 sports
 ```
 
-**Full description (4000 chars max):**
+**Full description:**
 ```
-PredictXta delivers AI-powered sports predictions using a 4-model ensemble 
-(GPT, Gemini, Claude, LLaMA) with 85%+ accuracy across 21+ sports.
+PredictXta delivers AI-powered sports predictions using a 4-model ensemble
+(GPT, Gemini, Claude, LLaMA) with calibrated confidence scores.
 
 🤖 AI PREDICTIONS
-• 4-model consensus predictions with confidence scores
-• Real-time AI analysis with confidence drivers
+• 4-model consensus predictions with explainable confidence
 • Sport-specific intelligence (xG, Elo, form, H2H)
-• Pre-match intelligence hub for every fixture
 
-⚽ 21+ SPORTS COVERED
-Football • Basketball • Tennis • Baseball • Ice Hockey • Rugby • 
-American Football • Cricket • MMA/UFC • Volleyball • Handball • 
-Table Tennis • Badminton • Darts • Snooker • Golf • Boxing • Cycling
+⚽ 13 SPORTS COVERED
+Football • Basketball • Tennis • Cricket • Baseball • Ice Hockey •
+Rugby • American Football • MMA/UFC • Volleyball • Handball • Esports
 
 📊 LIVE DATA
-• Live scores updated every 12 seconds
-• In-play match events and statistics
+• Live scores updated every 15 seconds
 • League standings across 500+ competitions
 
 👑 EXPERT TIPSTERS
-• Verified expert prediction system
-• Performance tracking & accuracy ratings
-• Daily expert slip submissions
+• Verified expert prediction system with performance tracking
 
 🎮 GAMIFICATION
 • Daily Challenge — pick 3 matches, earn coins
-• Global leaderboard — compete with fans worldwide
-• Earn coins for correct predictions
+• Global leaderboard
 
 💬 FAN COMMUNITY
-• Sport-specific chat rooms
-• Match discussion with live reaction
-• Real-time fan engagement
+• Sport-specific chat rooms with live reaction
 
-⚠️ DISCLAIMER: PredictXta provides AI-generated predictions for entertainment 
-purposes only. Not financial or betting advice. Gamble responsibly.
+⚠️ DISCLAIMER: For entertainment purposes only. Not betting advice.
 
-Available in 11 languages: English, Spanish, French, Arabic, Hindi, 
-Portuguese, German, Italian, Turkish, Chinese, Swahili
+Available in 11 languages.
 ```
 
 #### 3. Graphics Assets
 
-**Feature Graphic (1024×500):**
-- File: `assets/play-store-feature-graphic.png` ✅ Already generated
-- Upload to: **Store listing → Graphic assets → Feature graphic**
-
-**App Icon (512×512):**
-- Use `assets/logo.png` at full resolution
-- Must be PNG, no alpha channel required (Play Store adds rounded corners)
-
-**Phone Screenshots (minimum 2, recommended 8):**
-- Dimensions: 1080×1920 (portrait) or 1920×1080 (landscape)
-- Use `ScreenshotFrame` component in dev mode to capture:
-  1. AI Picks screen (home screen predictions)
-  2. Live Scores screen
-  3. Daily Challenge screen
-  4. Expert Tips screen
-  5. Match Detail with AI analysis
-  6. Community Chat screen
-
-**Tablet Screenshots (optional but recommended):**
-- Dimensions: 1200×1920 minimum
+| Asset | File | Notes |
+|-------|------|-------|
+| Feature Graphic (1024×500) | `assets/play-store-feature-graphic.png` | Upload to Play Console |
+| App Icon (512×512) | `assets/logo.png` | No alpha channel required |
+| Screenshots | `assets/screenshots/` | Minimum 2, maximum 8 |
 
 #### 4. Data Safety Form
 
-Go to **Policy → Data safety** and declare:
+| Data type | Collected | Shared | Purpose |
+|-----------|-----------|--------|---------|
+| Email address | Yes | No | Authentication |
+| User ID | Yes | No | App functionality |
+| Push token | Yes | No | Notifications |
+| App interactions | Yes | No | Analytics |
 
-| Data type | Collected | Shared | Required |
-|-----------|-----------|--------|----------|
-| Email address | Yes | No | No (can delete) |
-| User ID | Yes | No | Yes |
-| Push token | Yes | No | No |
-| Approximate location | No | — | — |
-| Username | Yes | No | No |
-| App interactions | Yes | No | No |
-
-**Security practices:**
-- [x] Data is encrypted in transit (TLS 1.3)
-- [x] You provide a way for users to request that their data is deleted
-- **Data deletion:** Available in app via Profile → Delete Account
-
-**Deletion URL:** `predictxta.app/privacy` (add deletion instructions)
+- Data deletion: available in-app via Profile → Delete Account
+- Data encrypted in transit: Yes (TLS 1.3)
 
 #### 5. Content Rating (IARC)
 
-Answer the IARC questionnaire:
-- Violence: **None**
-- Sexual content: **None**
-- Language: **None**
-- Controlled substances: **None**
-- Gambling: **YES — Simulated gambling** (sports prediction/odds display)
+- Simulated Gambling: **YES** (sports prediction with odds display)
+- All other categories: **None**
+- Expected rating: **17+**
 
-**Expected rating: PEGI 12 / TEEN (T)**
+#### 6. Google Cloud Console — OAuth Clients
 
-Note: If you show actual betting odds or link to betting sites → **17+ / MATURE**
-
-#### 6. In-App Billing (VIP Subscriptions)
-
-```bash
-# 1. Create subscription products in Play Console:
-#    Monetise → Products → Subscriptions
-
-# Product IDs to create:
-predictxta.vip.monthly    # £4.99/month
-predictxta.vip.yearly     # £39.99/year (33% discount)
-
-# 2. Update iapService.ts with real product IDs
-# 3. Test with internal test track first
-# 4. Add license testers in Play Console → Setup → License testing
-```
+- Android Client → Package: `com.predictxta.sports`
+- iOS Client → Bundle ID: `com.predictxta.sports`
+- Web Client → Redirect URI: `https://osmkbrryalhtpnayosmk.backend.onspace.ai/auth/v1/callback`
 
 ---
 
@@ -200,166 +140,75 @@ predictxta.vip.yearly     # £39.99/year (33% discount)
 ### Build Commands
 
 ```bash
-# Development build
-eas build --platform ios --profile development
-
-# Production IPA
-eas build --platform ios --profile production
-
-# Submit to App Store Connect
-eas submit --platform ios --profile production
+eas build --platform ios --profile production           # IPA for App Store
+eas submit --platform ios --profile production          # Submit to App Store Connect
 ```
 
 ### Apple Developer Prerequisites
 
 1. **Apple Developer Account** — $99/year at developer.apple.com
-2. **Bundle ID** registered: `com.predictxta.app`
-3. Capabilities to enable:
-   - Sign In with Apple ✅
-   - Push Notifications ✅
-   - In-App Purchase (for VIP)
+2. **App ID**: `com.predictxta.sports` — Capabilities: Sign In with Apple ✓, Push Notifications ✓
+3. **Service ID**: `com.predictxta.app` — for Sign In with Apple web/Android OAuth only
+4. **APNs Key** (.p8) — upload to Firebase → Cloud Messaging
 
 ### App Store Connect Setup
 
-1. Go to [appstoreconnect.apple.com](https://appstoreconnect.apple.com)
-2. **My Apps → + → New App**
-3. Platform: **iOS**
+1. [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → My Apps → + → New App
+2. Bundle ID: `com.predictxta.sports`
+3. SKU: `predictxta-ios-001` (matches eas.json)
 4. Name: **PredictXta - AI Sports Predictions**
-5. Primary language: **English (U.S.)**
-6. Bundle ID: `com.predictxta.app`
-7. SKU: `predictxta-ios-v1`
 
-### App Store Screenshots
+### Screenshot Requirements
 
-Required sizes:
-- iPhone 6.7" (1290×2796) — iPhone 15 Pro Max
-- iPhone 6.5" (1242×2688) — iPhone 11 Pro Max
-- iPad Pro 12.9" (2048×2732) — if tablet support
+| Size | Dimensions | Required |
+|------|-----------|---------|
+| iPhone 6.7" | 1290×2796 | ✅ Required |
+| iPhone 6.5" | 1242×2688 | ✅ Required |
+| iPhone 5.5" | 1242×2208 | Recommended |
+| iPad Pro 12.9" | 2048×2732 | Recommended |
 
-### Privacy Manifest (Required)
+### Age Rating
+- Simulated Gambling: **Infrequent/Mild** (expected 17+)
 
-Create `ios/PrivacyInfo.xcprivacy`:
+### EAS Submit Credentials
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN">
-<plist version="1.0">
-<dict>
-  <key>NSPrivacyTracking</key>
-  <false/>
-  <key>NSPrivacyTrackingDomains</key>
-  <array/>
-  <key>NSPrivacyCollectedDataTypes</key>
-  <array>
-    <dict>
-      <key>NSPrivacyCollectedDataType</key>
-      <string>NSPrivacyCollectedDataTypeEmailAddress</string>
-      <key>NSPrivacyCollectedDataTypeLinked</key>
-      <true/>
-      <key>NSPrivacyCollectedDataTypeTracking</key>
-      <false/>
-      <key>NSPrivacyCollectedDataTypePurposes</key>
-      <array>
-        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
-      </array>
-    </dict>
-  </array>
-  <key>NSPrivacyAccessedAPITypes</key>
-  <array>
-    <dict>
-      <key>NSPrivacyAccessedAPIType</key>
-      <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
-      <key>NSPrivacyAccessedAPITypeReasons</key>
-      <array>
-        <string>CA92.1</string>
-      </array>
-    </dict>
-  </array>
-</dict>
-</plist>
+```bash
+eas secret:create --name APPLE_ID                 --value your@email.com
+eas secret:create --name APP_STORE_CONNECT_APP_ID --value 1234567890
+eas secret:create --name APPLE_TEAM_ID            --value ABCD1234EF
 ```
-
-### APNs Configuration
-
-1. Apple Developer → **Certificates, Identifiers & Profiles**
-2. **Keys → + → Create new key**
-3. Enable **Apple Push Notifications service (APNs)**
-4. Download the `.p8` key file
-5. Upload to Firebase Console → **Project Settings → Cloud Messaging → APNs Authentication Key**
-6. Key ID and Team ID needed for Firebase
 
 ---
 
-## OTA Updates (expo-updates)
-
-After EAS build is created:
+## Required EAS Secrets
 
 ```bash
-# Get your real project ID
+eas secret:create --name GOOGLE_SERVICES_JSON  --value @./google-services.json   --type file
+eas secret:create --name GOOGLE_SERVICES_PLIST --value @./GoogleService-Info.plist --type file
+eas secret:create --name APPLE_ID              --value your@email.com
+eas secret:create --name APP_STORE_CONNECT_APP_ID --value 1234567890
+eas secret:create --name APPLE_TEAM_ID         --value ABCD1234EF
+```
+
+---
+
+## Key Deploy Commands
+
+```bash
 eas project:info
-
-# Update app.json:
-# "updates": { "url": "https://u.expo.dev/YOUR_REAL_PROJECT_UUID" }
-
-# Publish OTA update (no new build needed)
-eas update --channel production --message "Bug fix: improved AI picks loading"
-```
-
----
-
-## Admin Dashboard & Paywall Testing
-
-### Test VIP Paywall Flow
-
-1. **Low Balance (<5 coins):**
-   - Navigate to any match → AI Best 3 tab
-   - Should show lock overlay with "Unlock with 5 coins" button
-   - "Unlock" should show VIPUpgradeModal (insufficient funds)
-
-2. **Sufficient Balance (≥5 coins):**
-   - Navigate to match → AI Best 3 tab
-   - "Unlock with 5 coins" should deduct 5 coins and reveal predictions
-
-3. **VIP User:**
-   - Should see predictions without lock overlay
-
-### Test Admin Dashboard
-
-1. Navigate to `/admin` (requires admin role in `admin_roles` table)
-2. Check: Pipeline Monitor, Sync Controls, Data Integrity, Expert Management
-
----
-
-## Quick Reference Commands
-
-```bash
-# Install EAS CLI
-npm install -g eas-cli
-
-# Login
-eas login
-
-# Build for testing (APK)
-eas build --platform android --profile preview --non-interactive
-
-# Build for Play Store (AAB)
-eas build --platform android --profile production
-
-# Build for App Store (IPA)
-eas build --platform ios --profile production
-
-# Submit to Play Store
+eas secret:list
+eas credentials --platform android                # Get SHA-1
+eas build --platform android --profile production  # AAB
+eas build --platform android --profile production-apk  # APK
+eas build --platform ios     --profile production  # IPA
 eas submit --platform android --profile production
-
-# Submit to App Store
-eas submit --platform ios --profile production
-
-# Publish OTA update
-eas update --channel production --message "Release notes here"
-
-# Check build status
-eas build:list
-
-# View credentials
-eas credentials --platform android
+eas submit --platform ios     --profile production
+npx expo export --platform web
 ```
+
+---
+
+## Support
+- Privacy Policy: https://predictxta.app/privacy
+- Terms: https://predictxta.app/terms
+- Contact: support@predictxta.app

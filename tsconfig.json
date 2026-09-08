@@ -5,9 +5,6 @@
     "paths": {
       "@/*": [
         "./*"
-      ],
-      "expo-web-browser": [
-        "./shims/expo-web-browser/index.js"
       ]
     }
   },
@@ -16,5 +13,10 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "web-build"
   ]
 }
