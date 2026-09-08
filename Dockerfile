@@ -1,3 +1,6 @@
+# ── PredictXta Web Production Image ──────────────────────────────────────────
+# SDK 54 / React Native 0.81 / API 36 (Google Play compliant)
+# Package manager: pnpm (pnpm-lock.yaml is the authoritative lockfile)
 FROM node:20-alpine
 
 WORKDIR /app
@@ -10,12 +13,17 @@ ARG EXPO_PUBLIC_SUPABASE_ANON_KEY
 ENV EXPO_PUBLIC_SUPABASE_URL=${EXPO_PUBLIC_SUPABASE_URL}
 ENV EXPO_PUBLIC_SUPABASE_ANON_KEY=${EXPO_PUBLIC_SUPABASE_ANON_KEY}
 
-# ── Dependencies ───────────────────────────────────────────────────────────────
-# Copy lock file with glob so build doesn't fail if package-lock.json is absent
-COPY package.json package-lock.json* ./
+# ── Install pnpm ───────────────────────────────────────────────────────────────
+# pnpm is the authoritative package manager for this project.
+# pnpm-lock.yaml must not diverge from package.json.
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
-# Prefer ci (reproducible, fast) with offline cache; fall back to plain install
-RUN npm ci --prefer-offline 2>/dev/null || npm install --no-audit --no-fund
+# ── Dependencies ───────────────────────────────────────────────────────────────
+# Copy both manifests so pnpm can validate the lockfile.
+COPY package.json pnpm-lock.yaml ./
+
+# --frozen-lockfile ensures the Docker build fails if pnpm-lock.yaml is stale.
+RUN pnpm install --frozen-lockfile
 
 # ── Source ─────────────────────────────────────────────────────────────────────
 COPY . .
@@ -26,9 +34,7 @@ RUN echo "EXPO_PUBLIC_SUPABASE_URL=${EXPO_PUBLIC_SUPABASE_URL}" > .env && \
     echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${EXPO_PUBLIC_SUPABASE_ANON_KEY}" >> .env
 
 # ── Web export ─────────────────────────────────────────────────────────────────
-# Expo SDK 50+ outputs to /dist by default (Metro bundler, static output).
-# If your project uses an older Expo version that outputs to /web-build,
-# replace "dist" with "web-build" in the CMD below.
+# Expo SDK 54 outputs to /dist (Metro bundler, static output).
 RUN npx expo export --platform web
 
 # ── Runtime server ─────────────────────────────────────────────────────────────

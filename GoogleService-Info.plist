@@ -3,22 +3,35 @@
 <!--
   ⚠️  PLACEHOLDER — Replace with your real GoogleService-Info.plist from Firebase Console
 
-  Instructions:
+  PHASE 3 SETUP — follow docs/FIREBASE_SETUP.md for full walkthrough
+
+  Steps:
   1. Go to https://console.firebase.google.com
-  2. Select or create your project (e.g. 'predictxta-c6bcb')
-  3. Click the iOS icon to add an iOS app
-  4. Bundle ID: com.predictxta.sports
-  5. App nickname: PredictXta iOS
-  6. Download GoogleService-Info.plist and replace this file
-  7. NEVER commit the real file to git — add it to .gitignore
-  8. For EAS Build: eas secret:create - -name GOOGLE_SERVICES_PLIST - -value @./GoogleService-Info.plist
+  2. Select project (project_id: predictxta-c6bcb or your project)
+  3. Project Settings → Add iOS app
+     Bundle ID: com.predictxta.sports   ← CANONICAL iOS Bundle ID
+     App nickname: PredictXta iOS
+  4. Download GoogleService-Info.plist → place here (project root)
+  5. NEVER commit the real file to git
+  6. Upload to EAS:
+     eas secret:create --name GOOGLE_SERVICES_PLIST --value @./GoogleService-Info.plist --type file
+  7. Verify: eas secret:list → shows GOOGLE_SERVICES_PLIST (type: file)
+
+  REQUIRED FIELDS that must be real (non-placeholder):
+    CLIENT_ID:          iOS OAuth client ID from Google Cloud Console
+    REVERSED_CLIENT_ID: reverse of CLIENT_ID (used as URL scheme for Google Sign-In)
+    API_KEY:            iOS API key from Firebase
+    GOOGLE_APP_ID:      from Firebase → iOS app settings
+
+  ⚠️  BUNDLE_ID must be com.predictxta.sports (same as Android package name)
+      com.predictxta.app is the APPLE SERVICE ID (separate — for Sign In with Apple OAuth only)
 -->
 <plist version="1.0">
 <dict>
   <key>CLIENT_ID</key>
   <string>YOUR_IOS_CLIENT_ID.apps.googleusercontent.com</string>
   <key>REVERSED_CLIENT_ID</key>
-  <string>com.googleusercontent.apps.YOUR_REVERSED_CLIENT_ID</string>
+  <string>com.googleusercontent.apps.YOUR_REVERSED_IOS_CLIENT_ID</string>
   <key>API_KEY</key>
   <string>YOUR_IOS_API_KEY</string>
   <key>GCM_SENDER_ID</key>
@@ -30,7 +43,7 @@
   <key>PROJECT_ID</key>
   <string>predictxta-c6bcb</string>
   <key>STORAGE_BUCKET</key>
-  <string>predictxta-c6bcb.appspot.com</string>
+  <string>predictxta-c6bcb.firebasestorage.app</string>
   <key>IS_ADS_ENABLED</key>
   <false/>
   <key>IS_ANALYTICS_ENABLED</key>

@@ -1,39 +1,54 @@
 # Google OAuth Configuration Guide for PredictXta
 
-## Package / Bundle ID Quick Reference
+Updated: 2026-09-08 (Phase 2 — corrected to canonical bundle IDs)
 
-| Platform | Identifier |
-|----------|------------|
+---
+
+## Canonical Bundle / Package IDs
+
+| Platform | Identifier              |
+|----------|------------------------|
 | **Android** | `com.predictxta.sports` |
-| **iOS** | `com.predictxta.app` |
+| **iOS** | `com.predictxta.sports` |
 
-> These are **intentionally different**. Use the correct one for each Google Cloud Console OAuth client.
+> ✅ **Both platforms use the same identifier.** An earlier version of this guide
+> listed iOS as `com.predictxta.app`. That was incorrect.
+>
+> `com.predictxta.app` is an **Apple Service ID** — a separate Apple Developer
+> identifier used only for Sign In with Apple on web/Android OAuth (entered in
+> Supabase Auth → Apple provider as `client_id`). It is NOT the iOS Bundle ID.
+
+### Google Cloud Console Mapping
+
+| Client Type | Field | Value |
+|-------------|-------|-------|
+| Web Application | Authorized Redirect URI | `https://osmkbrryalhtpnayosmk.backend.onspace.ai/auth/v1/callback` |
+| Android | Package name | `com.predictxta.sports` |
+| iOS | Bundle ID | `com.predictxta.sports` |
 
 ---
 
 ## Root Cause (Fixed)
 
-The error `"Cannot make a deep link into a standalone app with no custom scheme defined"` had **5 compounding causes**:
+The error `"Cannot make a deep link into a standalone app with no custom scheme defined"` had compounding causes — all fixed:
 
-1. **`expo-web-browser` was shimmed to no-ops** — `openAuthSessionAsync` returned `{ type: 'cancel' }` immediately without opening a browser, so OAuth never launched.
-2. **`expo-auth-session` plugin missing** from `app.json` — the plugin is required to register the scheme in native manifests at build time.
-3. **`intentFilters` missing from Android config** — Android `AndroidManifest.xml` had no `VIEW` intent filter for `predictxta://` so the OS couldn't route OAuth redirects back to the app.
-4. **`CFBundleURLTypes` missing from iOS config** — iOS `Info.plist` had no URL scheme registration.
-5. **Password reset redirect used `onspaceapp://`** instead of the registered `predictxta://` scheme.
+1. **`expo-web-browser` was shimmed to no-ops** → replaced with real native adapter
+2. **`intentFilters` missing from Android config** → 7 entries added to app.json
+3. **`CFBundleURLTypes` missing from iOS config** → added to app.json infoPlist
+4. **Password reset redirect used `onspaceapp://`** → fixed to `predictxta://reset-password`
 
 ---
 
-## Files Modified
+## Files Modified (Historical)
 
 | File | Change |
 |------|--------|
-| `app.json` | Added 7 Android `intentFilters`, iOS `CFBundleURLTypes` |
+| `app.json` | Added 7 Android `intentFilters`, iOS `CFBundleURLTypes`, corrected `CFBundleURLName` to `com.predictxta.sports` |
 | `shims/expo-web-browser/index.js` | Replaced no-op shim with real native module adapter |
-| `app/login.tsx` | Replaced `signInWithGoogle()` template call with `signInWithGoogleOAuth()`, fixed reset redirect to `predictxta://reset-password` |
-| `app/_layout.tsx` | Universal deep-link handler for both OAuth callbacks and password reset |
-| `services/googleAuthService.ts` | Full OAuth flow: build Supabase OAuth URL → open browser → capture redirect → exchange code for session |
-| `app/auth/callback.tsx` | Visual callback screen shown while session exchange runs |
-| `app/deep-link-diagnostics.tsx` | **New** — Full deep-link and OAuth diagnostics panel |
+| `app/login.tsx` | Fixed reset redirect to `predictxta://reset-password` |
+| `app/_layout.tsx` | Universal deep-link handler for OAuth + password reset |
+| `services/googleAuthService.ts` | Full PKCE OAuth flow |
+| `services/appleAuthService.ts` | Clarified Bundle ID vs Service ID |
 
 ---
 
@@ -52,45 +67,42 @@ Redirect URLs (add ALL):
   predictxta://reset-password
   predictxta://account-deleted
   exp://**
-  https://*.supabase.co/auth/v1/callback
+  https://osmkbrryalhtpnayosmk.backend.onspace.ai/auth/v1/callback
 ```
 
 ### 2. Supabase Dashboard → Authentication → Providers → Google
 
 - Toggle **Google** to **Enabled**
-- **Client ID**: paste your Web OAuth Client ID from Google Cloud Console
-- **Client Secret**: paste your Web OAuth Client Secret
+- **Client ID**: Web OAuth Client ID from Google Cloud Console
+- **Client Secret**: Web OAuth Client Secret
 
 ### 3. Google Cloud Console → APIs & Services → Credentials
 
 #### Web Application OAuth Client
-- **Authorized JavaScript Origins**: `https://osmkbrryalhtpnayosmk.supabase.co`
-- **Authorized Redirect URIs**: `https://osmkbrryalhtpnayosmk.supabase.co/auth/v1/callback`
+- **Authorized JavaScript Origins**: `https://osmkbrryalhtpnayosmk.backend.onspace.ai`
+- **Authorized Redirect URIs**: `https://osmkbrryalhtpnayosmk.backend.onspace.ai/auth/v1/callback`
 
-> ⚠️ This is the **only** redirect URI Google needs. Do NOT add `predictxta://auth/callback` here — that is a Supabase-side URL, not a Google-side URL.
+> ⚠️ Do NOT add `predictxta://auth/callback` here — that is Supabase-side.
 
 #### Android OAuth Client
-- **Package name**: `com.predictxta.sports` ← `.sports` not `.app`
-- **SHA-1 certificate fingerprint (debug)**: Run `keytool -keystore ~/.android/debug.keystore -list -v` (password: `android`)
-- **SHA-1 certificate fingerprint (release)**: Run `keytool -keystore release.keystore -list -v`
-- **SHA-256 certificate fingerprint**: Same tool, copy SHA-256 output
+- **Package name**: `com.predictxta.sports`
+- **SHA-1 fingerprint**: `eas credentials --platform android` after first EAS build
+- **SHA-256 fingerprint**: same tool
 
-#### iOS OAuth Client  
-- **Bundle ID**: `com.predictxta.app` ← `.app` not `.sports`
+#### iOS OAuth Client
+- **Bundle ID**: `com.predictxta.sports`
 
 ### 4. Google Cloud Console → OAuth Consent Screen
-
 - **App name**: PredictXta
-- **User support email**: your email
-- **Authorized domains**: `osmkbrryalhtpnayosmk.supabase.co`
 - **Scopes**: `openid`, `email`, `profile`
-- **Status**: Published (or add test users for testing)
+- **Status**: Published (or add test users)
+- **Authorized domains**: `osmkbrryalhtpnayosmk.backend.onspace.ai`
 
 ---
 
-## Android Intent Filters (app.json)
+## Android Intent Filters (app.json — verified)
 
-The following 7 intent-filter entries are registered in `app.json → android.intentFilters` and generate corresponding `<intent-filter>` blocks in `AndroidManifest.xml`:
+7 entries registered:
 
 | # | Scheme | Host | Path | Purpose |
 |---|--------|------|------|---------|
@@ -101,8 +113,6 @@ The following 7 intent-filter entries are registered in `app.json → android.in
 | 5 | predictxta | login-callback | — | Alternate OAuth path |
 | 6 | predictxta | reset-password | — | Password reset |
 | 7 | predictxta | account-deleted | — | Post-deletion landing |
-
-All entries use `category: ["BROWSABLE", "DEFAULT"]` and `action: VIEW`.
 
 ---
 
@@ -115,85 +125,49 @@ User taps "Continue with Google"
 signInWithGoogleOAuth() in googleAuthService.ts
   │
   ├─ 1. Calls supabase.auth.signInWithOAuth({ provider: 'google', skipBrowserRedirect: true })
-  │     Returns the Google OAuth URL with redirect_uri = predictxta://auth/callback
+  │     Returns the Google OAuth URL with redirect_uri pointing to Supabase callback
   │
   ├─ 2. Registers pending resolver BEFORE opening browser (key Android fix)
   │
   ├─ 3. Opens Google OAuth URL via WebBrowser.openAuthSessionAsync(url, 'predictxta://auth/callback')
   │     System browser opens → User signs in with Google
   │
-  ├─ 4. Google redirects to predictxta://auth/callback?code=XXXX
-  │     Android: CCT fires deep link BEFORE openAuthSessionAsync resolves
-  │     → Deep-link handler calls handleOAuthCallback(url)
-  │     → Exchanges code for session
-  │     → Resolves pending resolver
-  │     iOS: openAuthSessionAsync captures redirect and resolves with { type: 'success', url }
+  ├─ 4. Google redirects to Supabase → Supabase redirects to predictxta://auth/callback?code=XXXX
+  │     Android: CCT fires deep link; deep-link handler calls handleOAuthCallback(url)
+  │     iOS: openAuthSessionAsync captures redirect
   │
   ├─ 5. Extract ?code= from URL
   │     Call supabase.auth.exchangeCodeForSession(code)
   │     Dedup guard prevents double-exchange on Android
-  │     Supabase returns { session: { access_token, refresh_token, user } }
   │
-  └─ 6. Session stored in Supabase client
-        AuthRouter detects authenticated state → navigates to /(tabs)
+  └─ 6. Session stored → AuthRouter redirects to /(tabs)
 ```
 
 ---
 
 ## AuthSession.makeRedirectUri() — BANNED
 
-`AuthSession.makeRedirectUri()` is **not used** in this project. It wraps `Linking.createURL()` and is environment-dependent:
+`AuthSession.makeRedirectUri()` is not used. It wraps `Linking.createURL()`:
 
-| Environment | makeRedirectUri() output |
-|-------------|-------------------------|
+| Environment | Output |
+|-------------|--------|
 | Expo Go | `exp://192.168.x.x:8081/--/...` |
 | EAS build (no projectId) | **THROWS error** |
 | Standalone | `predictxta://auth/callback` (when configured) |
 
-We hardcode `'predictxta://auth/callback'` directly in `getRedirectUri()` to avoid all environment-dependent behavior.
-
----
-
-## Expo Go Limitation
-
-⚠️ Custom URL scheme deep links **do not work in Expo Go** on any platform.
-
-- Expo Go intercepts all URLs through its own scheme (`exp://`)
-- The OS cannot route `predictxta://auth/callback` back to your app inside Expo Go
-- `canOpenURL('predictxta://')` returns `false` in Expo Go
-
-**You must use a native development build or production APK/IPA to test Google OAuth.**
-
-Use `app/deep-link-diagnostics.tsx` to verify your build environment automatically detects this condition and warns you before testing.
+We hardcode `'predictxta://auth/callback'` directly. This is the only safe approach.
 
 ---
 
 ## Build Instructions
 
-Google OAuth **only works in native builds**, not in Expo Go or web preview.
+Google OAuth **only works in native builds**.
 
-### Android APK (development build)
 ```bash
-eas build --platform android --profile development
+eas build --platform android --profile preview        # APK for testing
+eas build --platform android --profile production      # AAB for Play Store
+eas build --platform ios --profile production          # IPA for App Store
 ```
-
-### Android APK (preview — installable APK without Play Store)
-```bash
-eas build --platform android --profile preview
-```
-Or use the Download button in the top-right toolbar → Download APK.
-
-### Android AAB (production — Play Store)
-```bash
-eas build --platform android --profile production
-```
-Ensure your production keystore SHA-1/SHA-256 is registered in Google Cloud Console.
-
-### iOS (App Store)
-```bash
-eas build --platform ios --profile production
-```
-Ensure Bundle ID `com.predictxta.app` is registered as iOS OAuth client in Google Cloud Console.
 
 ---
 
@@ -201,12 +175,10 @@ Ensure Bundle ID `com.predictxta.app` is registered as iOS OAuth client in Googl
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `Cannot make a deep link` | Old `Linking.createURL()` call | Use hardcoded `'predictxta://auth/callback'` |
-| Browser opens but no callback | `predictxta://auth/callback` missing from Supabase Redirect URLs | Add predictxta://** to Supabase |
-| `redirect_uri_mismatch` from Google | Wrong URI in Google Cloud Web client | Set to `https://osmkbrryalhtpnayosmk.supabase.co/auth/v1/callback` |
-| `403: access_denied` | OAuth consent screen not published | Publish or add test user in Google Cloud |
+| `Cannot make a deep link` | Old `Linking.createURL()` call | Already fixed — hardcoded redirect URI |
+| Browser opens but no callback | `predictxta://auth/callback` missing from Supabase Redirect URLs | Add `predictxta://**` to Supabase |
+| `redirect_uri_mismatch` | Wrong URI in Google Cloud Web client | Set to backend callback URL |
+| `403: access_denied` | OAuth consent screen not published | Publish or add test user |
 | E006 on Android | Chrome Custom Tab fires before promise resolves | Handled by pre-registered resolver + retry loop |
-| Works debug, fails release | Wrong SHA-1 (release vs debug) | Register release keystore SHA-1 in Google Cloud Android client |
-| iOS: browser opens, no callback | Missing `CFBundleURLTypes` | Already fixed in app.json ios.infoPlist |
-| canOpenURL returns false | Running in Expo Go | Install native Dev Build or Production APK |
-| Package name mismatch | Using iOS bundle ID for Android client | Android = `com.predictxta.sports`, iOS = `com.predictxta.app` |
+| Works debug, fails release | Wrong SHA-1 | Register release keystore SHA-1 via `eas credentials --platform android` |
+| Package name mismatch | Old `.app` package in Google Cloud Android client | Update to `com.predictxta.sports` |

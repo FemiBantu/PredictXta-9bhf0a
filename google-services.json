@@ -1,19 +1,33 @@
 {
   "_comment": "⚠️  PLACEHOLDER — Replace with your real google-services.json from Firebase Console",
   "_instructions": [
+    "PHASE 3 SETUP — follow docs/FIREBASE_SETUP.md for full walkthrough",
+    "",
     "1. Go to https://console.firebase.google.com",
-    "2. Select or create your project (e.g. 'predictxta-c6bcb')",
-    "3. Click the Android icon to add an Android app",
-    "4. Package name: com.predictxta.sports",
-    "5. App nickname: PredictXta Android",
-    "6. Download google-services.json and replace this file",
-    "7. NEVER commit the real file to git — add it to .gitignore",
-    "8. For EAS Build, upload via: eas secret:create --name GOOGLE_SERVICES_JSON --value @./google-services.json"
+    "2. Select or create project (project_id should be 'predictxta-c6bcb' or similar)",
+    "3. Project Settings → Add Android app",
+    "   Package name: com.predictxta.sports",
+    "   App nickname: PredictXta Android",
+    "4. Download google-services.json → place here (project root)",
+    "5. NEVER commit the real file to git",
+    "6. Upload to EAS: eas secret:create --name GOOGLE_SERVICES_JSON --value @./google-services.json --type file",
+    "7. Verify: eas secret:list → shows GOOGLE_SERVICES_JSON (type: file)",
+    "",
+    "REQUIRED FIELDS that must be real (non-placeholder):",
+    "  project_number: numeric string from Firebase project settings",
+    "  project_id:     your Firebase project slug",
+    "  mobilesdk_app_id: from Firebase → Android app",
+    "  client_id (type 3): Web client ID for Google Sign-In",
+    "  current_key: Android API key from Firebase",
+    "",
+    "After EAS build, add SHA-1 to Firebase:",
+    "  eas credentials --platform android  →  copy SHA-1",
+    "  Firebase Console → Project Settings → Your Android app → Add fingerprint"
   ],
   "project_info": {
     "project_number": "409581654804",
     "project_id": "predictxta-c6bcb",
-    "storage_bucket": "predictxta-c6bcb.appspot.com"
+    "storage_bucket": "predictxta-c6bcb.firebasestorage.app"
   },
   "client": [
     {
@@ -25,7 +39,15 @@
       },
       "oauth_client": [
         {
-          "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+          "client_id": "YOUR_ANDROID_CLIENT_ID.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.predictxta.sports",
+            "certificate_hash": "YOUR_SHA1_FINGERPRINT"
+          }
+        },
+        {
+          "client_id": "YOUR_WEB_CLIENT_ID.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
