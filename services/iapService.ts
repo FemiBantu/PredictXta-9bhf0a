@@ -47,13 +47,17 @@ function getPurchaseStateAndroid(): { PURCHASED: number } {
 }
 
 // ─── Product IDs ──────────────────────────────────────────────────────────────
+// These IDs MUST match exactly what is configured in:
+//   • App Store Connect → In-App Purchases (com.predictxta.sports)
+//   • Google Play Console → Monetization (com.predictxta.sports)
+//   • verify-purchase edge function PRODUCT_DEFINITIONS
 export const PRODUCT_IDS = {
-  VIP_MONTHLY:   'predictx_vip_monthly',
-  VIP_BIANNUAL:  'predictx_vip_biannual',
-  VIP_ANNUAL:    'predictx_vip_annual',
-  COINS_500:     'predictx_coins_100',
-  COINS_2500:    'predictx_coins_500',
-  COINS_5000:    'predictx_coins_1000',
+  VIP_MONTHLY:   'predictxta_vip_monthly',
+  VIP_BIANNUAL:  'predictxta_vip_6month',
+  VIP_ANNUAL:    'predictxta_vip_yearly',
+  COINS_500:     'predictxta_coins_500',
+  COINS_2500:    'predictxta_coins_2500',
+  COINS_5000:    'predictxta_coins_5000',
 } as const;
 
 export type ProductId = (typeof PRODUCT_IDS)[keyof typeof PRODUCT_IDS];
@@ -91,7 +95,7 @@ export const IAP_PLANS: IAPPlan[] = [
     name: 'Monthly',
     description: 'Full VIP access billed monthly',
     fallbackPrice: '$1.99/mo',
-    daysValid: 30,
+    daysValid: 31,
     isSubscription: true,
     isConsumable: false,
     accentColor: '#4ECDC4',
@@ -101,7 +105,7 @@ export const IAP_PLANS: IAPPlan[] = [
     name: '6 Months',
     description: 'Full VIP access — billed every 6 months',
     fallbackPrice: '$8.39/6mo',
-    daysValid: 180,
+    daysValid: 183,
     isSubscription: true,
     isConsumable: false,
     savingLabel: 'Save 30%',
@@ -391,15 +395,21 @@ export async function grantVipEntitlement(
 export async function grantCoins(
   userId: string,
   coinAmount: number,
+  referenceId?: string,
 ): Promise<{ ok: boolean; error: string | null }> {
   try {
     const supabase = getSupabaseClient();
     // Coins are granted server-side via add_user_coins (SECURITY DEFINER).
     // This RPC is the only safe path — client cannot directly UPDATE user_coins
-    // because the service_update_coins RLS policy restricts direct updates.
+    // because there is no INSERT/UPDATE RLS policy for user_coins on the client.
+    // The RPC also writes an immutable ledger entry to coin_transactions.
     const { error } = await supabase.rpc('add_user_coins', {
       p_user_id: userId,
       p_amount: coinAmount,
+      p_transaction_type: 'purchase',
+      p_reference_id: referenceId ?? null,
+      p_reference_type: 'iap',
+      p_description: `Coin purchase: ${coinAmount} coins`,
     });
     if (error) return { ok: false, error: error.message };
     return { ok: true, error: null };
