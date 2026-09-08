@@ -195,9 +195,33 @@ export function useIAP(): IAPState {
 
   // ─── Restore purchases ───────────────────────────────────────────────────────
   const restorePurchases = useCallback(async () => {
-    // Re-check DB subscription — covers receipt-validated purchases
+    if (!iapAvailable) {
+      await refreshVipStatus();
+      return;
+    }
+    try {
+      const iapLib = require('react-native-iap');
+      // getAvailablePurchases returns all non-consumed/non-expired purchases
+      const restored: Purchase[] = await iapLib.getAvailablePurchases();
+      if (restored.length > 0 && user?.id) {
+        // Server-verify each restored purchase — same flow as new purchase
+        for (const purchase of restored) {
+          const plan =
+            IAP_PLANS.find((p) => p.id === purchase.productId) ??
+            COIN_PACKS.find((p) => p.id === purchase.productId);
+          if (!plan) continue;
+          if (plan.isSubscription) {
+            await grantVipEntitlement(user.id, plan, { ...purchase, isRestore: true } as any);
+          }
+          // Consumables are not restored (by design — idempotency prevents duplicate grants)
+        }
+      }
+    } catch (err) {
+      console.warn('[useIAP] restorePurchases error:', err);
+    }
+    // Always refresh DB status after restore attempt
     await refreshVipStatus();
-  }, [refreshVipStatus]);
+  }, [refreshVipStatus, iapAvailable, user?.id]);
 
   const clearError = useCallback(() => setPurchaseError(null), []);
 

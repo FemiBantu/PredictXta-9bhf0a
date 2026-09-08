@@ -1,16 +1,18 @@
 # PredictXta — Production CI/CD Pipeline
-# Runs on every push to main and on pull requests to main.
+# Expo SDK 54 / React Native 0.81 / API 36 (Google Play compliant)
+# Package manager: pnpm (pnpm-lock.yaml is authoritative — never npm/yarn)
 #
 # Pipeline stages:
-#   1. Install dependencies
+#   1. Install dependencies (pnpm --frozen-lockfile)
 #   2. TypeScript type check
 #   3. ESLint
 #   4. Sports Registry validation
-#   5. Mock-data scan (fails if mock data used in production path)
-#   6. Secret scan (fails if provider secrets appear in client code)
+#   5. Mock-data scan
+#   6. Secret scan
 #   7. Unsupported sport scan
-#   8. Expo config validation
-#   9. EAS production build (main branch only)
+#   8. Expo config validation (SDK 54, targetSdkVersion 36, newArchEnabled)
+#   9. Phase 2–7 hardening checks
+#  10. EAS production build (main branch only)
 
 name: PredictXta CI
 
@@ -24,7 +26,7 @@ env:
   NODE_VERSION: '20'
 
 jobs:
-  # ─── Stage 1-4: Lint, Type-check, Registry & Mock-data scan ─────────────────
+  # ─── Stage 1–9: Validate ─────────────────────────────────────────────────────
   validate:
     name: Validate Source
     runs-on: ubuntu-latest
@@ -32,17 +34,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
+      # pnpm must be set up BEFORE setup-node so the cache key is correct
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
           run_install: false
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
       - name: Get pnpm store directory
         id: pnpm-cache
@@ -86,7 +89,6 @@ jobs:
       - name: Scan for mock data in production paths
         run: |
           echo "Scanning for mock data usage in production code paths..."
-          # Exclude mockData.ts itself, test files, and this workflow
           FOUND=0
           for pattern in "MOCK_MATCHES" "MOCK_PREDICTIONS" "MOCK_CHAT_MESSAGES" "generateMockChallengeMatches" "generateMockExpertPredictions"; do
             HITS=$(grep -rn "$pattern" \
@@ -104,7 +106,6 @@ jobs:
           if [ "$FOUND" -eq 1 ]; then
             echo ""
             echo "FAIL: Mock data detected in production code paths."
-            echo "Remove mock data fallbacks and show honest empty/error states instead."
             exit 1
           fi
           echo "✓ No mock data in production code paths"
@@ -114,7 +115,6 @@ jobs:
         run: |
           echo "Scanning for secrets in client-accessible code..."
           FOUND=0
-          # Check that no EXPO_PUBLIC_ secret keys exist
           for pattern in "EXPO_PUBLIC_SUPABASE_SERVICE_ROLE" "EXPO_PUBLIC_OPENAI" "EXPO_PUBLIC_GEMINI" "EXPO_PUBLIC_GROQ" "EXPO_PUBLIC_API_FOOTBALL" "EXPO_PUBLIC_SPORTSDB"; do
             HITS=$(grep -rn "$pattern" \
               --include="*.ts" --include="*.tsx" --include="*.json" --include="*.env*" \
@@ -133,9 +133,7 @@ jobs:
       - name: Scan for unsupported sports in active production paths
         run: |
           echo "Scanning for removed sports in active production files..."
-          FOUND=0
           REMOVED_SPORTS="formula1|formula-1|afl|australian-football|badminton|table-tennis|tabletennis|snooker|darts|cycling|athletics|motorsports|squash"
-          # Skip migration files, docs, and history files
           HITS=$(grep -rniE "$REMOVED_SPORTS" \
             --include="*.ts" --include="*.tsx" \
             --exclude-dir="node_modules" \
@@ -152,39 +150,133 @@ jobs:
           fi
           echo "✓ Unsupported sport scan complete (review any warnings above)"
 
-      # ── Expo config validation ─────────────────────────────────────────────
-      - name: Validate Expo app.json
+      # ── Phase 4 IAP Product ID Consistency Gate ─────────────────────────
+      - name: Phase 4 — IAP product ID consistency check
+        run: |
+          node -e "
+          const fs = require('fs');
+          const iapSrc = fs.readFileSync('./services/iapService.ts', 'utf8');
+          const edgeSrc = fs.readFileSync('./supabase/functions/verify-purchase/index.ts', 'utf8');
+
+          const CANONICAL_IDS = [
+            'predictxta_vip_monthly',
+            'predictxta_vip_6month',
+            'predictxta_vip_yearly',
+            'predictxta_coins_500',
+            'predictxta_coins_2500',
+            'predictxta_coins_5000',
+          ];
+
+          const BANNED_LEGACY = [
+            'predictx_vip_monthly','predictx_vip_biannual','predictx_vip_annual',
+            'predictx_coins_100','predictx_coins_500','predictx_coins_1000',
+          ];
+
+          let ok = true;
+
+          for (const id of CANONICAL_IDS) {
+            if (!iapSrc.includes(id)) {
+              console.error('CRITICAL: canonical product ID ' + id + ' missing from iapService.ts'); ok = false;
+            }
+            if (!edgeSrc.includes(id)) {
+              console.error('CRITICAL: canonical product ID ' + id + ' missing from verify-purchase/index.ts'); ok = false;
+            }
+          }
+
+          for (const id of BANNED_LEGACY) {
+            if (iapSrc.includes(id) && !iapSrc.includes('// legacy') && !iapSrc.includes('// alias')) {
+              console.error('WARNING: legacy product ID ' + id + ' still in iapService.ts');
+            }
+          }
+
+          if (!ok) process.exit(1);
+          console.log('✓ Phase 4: IAP product IDs consistent between client and edge function');
+          "
+
+      # ── Phase 3 Firebase Credential Audit ──────────────────────────────
+      - name: Phase 3 — Firebase credential structure audit
+        run: node scripts/validate-firebase-credentials.js
+        # Runs in warning mode (no --strict) so CI is not blocked by
+        # placeholder files during development. Production EAS builds
+        # get real credentials injected via EAS secrets at build time.
+        # Add --strict flag when requiring real credentials in CI.
+
+      # ── Phase 2 Native Identity Gate ─────────────────────────────────────
+      - name: Phase 2 — validate canonical bundle identifiers
         run: |
           node -e "
           const config = require('./app.json');
           const expo = config.expo;
-          if (!expo.slug) { console.error('Missing expo.slug'); process.exit(1); }
-          if (expo.android?.package !== 'com.predictxta.sports') {
-            console.error('Android package mismatch: ' + expo.android?.package);
-            process.exit(1);
+          const androidPkg = (expo.android || {}).package;
+          const iosBundle = (expo.ios || {}).bundleIdentifier;
+          const CANONICAL = 'com.predictxta.sports';
+          let ok = true;
+          if (androidPkg !== CANONICAL) {
+            console.error('CRITICAL: android.package is ' + androidPkg + ', expected ' + CANONICAL);
+            ok = false;
+          } else {
+            console.log('✓ android.package = ' + androidPkg);
           }
-          if (expo.ios?.bundleIdentifier !== 'com.predictxta.sports') {
-            console.error('iOS bundle ID mismatch: ' + expo.ios?.bundleIdentifier);
-            process.exit(1);
+          if (iosBundle !== CANONICAL) {
+            console.error('CRITICAL: ios.bundleIdentifier is ' + iosBundle + ', expected ' + CANONICAL);
+            ok = false;
+          } else {
+            console.log('✓ ios.bundleIdentifier = ' + iosBundle);
           }
-          const targetSdk = expo.android?.targetSdkVersion;
-          if (!targetSdk || targetSdk < 35) {
-            console.error('targetSdkVersion must be >= 35. Got: ' + targetSdk);
-            process.exit(1);
+          if (androidPkg !== iosBundle) {
+            console.error('CRITICAL: android.package and ios.bundleIdentifier diverged: ' + androidPkg + ' vs ' + iosBundle);
+            ok = false;
+          }
+          if (!ok) process.exit(1);
+          console.log('✓ Phase 2: canonical identifiers consistent');
+          "
+
+      - name: Phase 2 — scan for stale com.predictxta.app in runtime code
+        run: |
+          echo "Scanning runtime code for stale com.predictxta.app bundle ID..."
+          HITS=$(grep -rn 'com\.predictxta\.app' \
+            --include='*.ts' --include='*.tsx' --include='*.json' \
+            --exclude-dir=node_modules \
+            --exclude-dir=.github \
+            --exclude='*.md' \
+            --exclude='google-oauth-e006-fix.md' \
+            . 2>/dev/null | \
+            grep -v '// Apple Service ID\|// Service ID\|Apple Service ID\|web/Android OAuth\|STORE_SUBMISSION\|phase2-native' || true)
+          if [ -n "$HITS" ]; then
+            echo "WARNING: stale com.predictxta.app reference found in runtime files:"
+            echo "$HITS"
+            echo "If this is a legitimate Apple Service ID reference, add a comment: // Apple Service ID"
+          else
+            echo "✓ No stale com.predictxta.app in runtime code"
+          fi
+
+      # ── Expo config validation ─────────────────────────────────────────────
+      - name: Validate Expo app.json (SDK 54, API 36, New Architecture)
+        run: |
+          node -e "
+          const config = require('./app.json');
+          const expo = config.expo;
+          let ok = true;
+          if (!expo.slug) { console.error('Missing expo.slug'); ok = false; }
+          if ((expo.android || {}).package !== 'com.predictxta.sports') {
+            console.error('Android package mismatch: ' + (expo.android || {}).package); ok = false;
+          }
+          if ((expo.ios || {}).bundleIdentifier !== 'com.predictxta.sports') {
+            console.error('iOS bundle ID mismatch: ' + (expo.ios || {}).bundleIdentifier); ok = false;
           }
           const sdkVer = expo.sdkVersion;
           if (!sdkVer || !sdkVer.startsWith('54')) {
-            console.error('Expo SDK must be 54.x (API 36 required for Google Play). Got: ' + sdkVer);
-            process.exit(1);
+            console.error('Expo SDK must be 54.x. Got: ' + sdkVer); ok = false;
           }
-          if (targetSdk < 36) {
-            console.error('targetSdkVersion must be 36 for Google Play API 36 compliance. Got: ' + targetSdk);
-            process.exit(1);
+          // targetSdkVersion lives under expo.android.targetSdkVersion
+          const targetSdk = (expo.android || {}).targetSdkVersion;
+          if (!targetSdk || targetSdk < 36) {
+            console.error('android.targetSdkVersion must be >= 36 for Google Play API 36. Got: ' + targetSdk); ok = false;
           }
           if (expo.newArchEnabled !== true) {
-            console.error('newArchEnabled must be true for SDK 54 best practices and full API 36 compliance. Got: ' + expo.newArchEnabled);
-            process.exit(1);
+            console.error('newArchEnabled must be true for SDK 54 New Architecture. Got: ' + expo.newArchEnabled); ok = false;
           }
+          if (!ok) process.exit(1);
           console.log('✓ app.json valid: pkg=com.predictxta.sports sdk=' + sdkVer + ' targetSdk=' + targetSdk + ' newArch=true (API 36 compliant)');
           "
 
@@ -194,7 +286,6 @@ jobs:
           echo "Verifying Phase 2 security hardening..."
           FAILED=0
 
-          # 1. Service-role key must never appear in client/frontend code
           SRKEY=$(grep -rn "SUPABASE_SERVICE_ROLE_KEY" \
             --include="*.ts" --include="*.tsx" \
             --exclude-dir=node_modules \
@@ -207,34 +298,21 @@ jobs:
             FAILED=1
           fi
 
-          # 2. authGuard.ts must exist
           if [ ! -f "supabase/functions/_shared/authGuard.ts" ]; then
-            echo "CRITICAL: authGuard.ts missing from _shared"
-            FAILED=1
+            echo "CRITICAL: authGuard.ts missing from _shared"; FAILED=1
           else
             echo "✓ authGuard.ts present"
           fi
 
-          # 3. entitlementService.ts must exist
           if [ ! -f "supabase/functions/_shared/entitlementService.ts" ]; then
-            echo "CRITICAL: entitlementService.ts missing from _shared"
-            FAILED=1
+            echo "CRITICAL: entitlementService.ts missing from _shared"; FAILED=1
           else
             echo "✓ entitlementService.ts present"
           fi
 
-          # 4. No X-PX-User-Tier trusted from client without gateway marker
           echo "✓ VIP cache isolation hardened in Cloudflare gateway"
-          echo "✓ Admin roles: INSERT/UPDATE/DELETE blocked for authenticated users"
-          echo "✓ vip_subscriptions: INSERT/UPDATE/DELETE blocked for authenticated users"
-          echo "✓ user_coins: INSERT/UPDATE blocked for authenticated users"
-          echo "✓ purchase_audit_log: INSERT/UPDATE blocked for authenticated users"
 
-          if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "FAIL: Phase 2 security checks failed."
-            exit 1
-          fi
+          if [ "$FAILED" -eq 1 ]; then echo "FAIL: Phase 2 checks failed."; exit 1; fi
           echo "✓ Phase 2 security hardening verified"
 
       # ── Phase 4 Prediction Engine Validation ──────────────────────────────
@@ -243,63 +321,47 @@ jobs:
           echo "Verifying Phase 4 prediction engine..."
           FAILED=0
 
-          # 1. quantitativeModels.ts must exist and have all 13 sport models
           if [ ! -f "supabase/functions/_shared/quantitativeModels.ts" ]; then
-            echo "CRITICAL: quantitativeModels.ts missing"
-            FAILED=1
+            echo "CRITICAL: quantitativeModels.ts missing"; FAILED=1
           else
             for model in footballModel basketballModel tennisModel cricketModel baseballModel hockeyModel americanFootballModel rugbyModel mmaBoxingModel esportsModel setBasedModel; do
               if ! grep -q "function ${model}" supabase/functions/_shared/quantitativeModels.ts 2>/dev/null; then
-                echo "CRITICAL: ${model} missing from quantitativeModels.ts"
-                FAILED=1
+                echo "CRITICAL: ${model} missing from quantitativeModels.ts"; FAILED=1
               fi
             done
             echo "✓ All sport quantitative models present"
           fi
 
-          # 2. qualityGate.ts must exist with sport configs for 13 sports
           if [ ! -f "supabase/functions/_shared/qualityGate.ts" ]; then
-            echo "CRITICAL: qualityGate.ts missing"
-            FAILED=1
+            echo "CRITICAL: qualityGate.ts missing"; FAILED=1
           else
-            if ! grep -q 'formula1' supabase/functions/_shared/qualityGate.ts 2>/dev/null; then
-              echo "✓ formula1 not in quality gate sport configs"
+            if grep -q 'formula1' supabase/functions/_shared/qualityGate.ts 2>/dev/null; then
+              echo "CRITICAL: formula1 found in qualityGate sport configs"; FAILED=1
             else
-              echo "CRITICAL: formula1 found in qualityGate sport configs"
-              FAILED=1
+              echo "✓ formula1 not in quality gate sport configs"
             fi
             echo "✓ qualityGate.ts present"
           fi
 
-          # 3. generate-prediction must not contain Math.random
           if grep -n 'Math\.random' supabase/functions/generate-prediction/index.ts 2>/dev/null; then
-            echo "CRITICAL: Math.random found in generate-prediction — fabricated confidence detected"
-            FAILED=1
+            echo "CRITICAL: Math.random found in generate-prediction — fabricated confidence"; FAILED=1
           else
             echo "✓ No Math.random in generate-prediction"
           fi
 
-          # 4. predictionEligibility.ts must exist (pre-match guard)
           if [ ! -f "supabase/functions/_shared/predictionEligibility.ts" ]; then
-            echo "CRITICAL: predictionEligibility.ts missing"
-            FAILED=1
+            echo "CRITICAL: predictionEligibility.ts missing"; FAILED=1
           else
             echo "✓ predictionEligibility.ts present"
           fi
 
-          # 5. No Math.random in quantitativeModels.ts
           if grep -n 'Math\.random' supabase/functions/_shared/quantitativeModels.ts 2>/dev/null; then
-            echo "CRITICAL: Math.random found in quantitativeModels.ts — non-deterministic models"
-            FAILED=1
+            echo "CRITICAL: Math.random found in quantitativeModels.ts"; FAILED=1
           else
             echo "✓ No Math.random in quantitativeModels.ts"
           fi
 
-          if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "FAIL: Phase 4 prediction engine checks failed."
-            exit 1
-          fi
+          if [ "$FAILED" -eq 1 ]; then echo "FAIL: Phase 4 checks failed."; exit 1; fi
           echo "✓ Phase 4 prediction engine verified"
 
       # ── Phase 5 Prediction Delivery Validation ────────────────────────────
@@ -308,131 +370,50 @@ jobs:
           echo "Verifying Phase 5 prediction delivery platform..."
           FAILED=0
 
-          # 1. smart-refresh must exist (prediction scheduler)
-          if [ ! -f "supabase/functions/smart-refresh/index.ts" ]; then
-            echo "CRITICAL: smart-refresh/index.ts missing"
-            FAILED=1
-          else
-            echo "✓ smart-refresh present"
-          fi
+          for f in "supabase/functions/smart-refresh/index.ts" \
+                   "supabase/functions/monitoring-dashboard/index.ts" \
+                   "supabase/functions/predictions-feed/index.ts" \
+                   "services/phase5IntegrityTests.ts"; do
+            if [ ! -f "$f" ]; then echo "CRITICAL: $f missing"; FAILED=1
+            else echo "✓ $f present"; fi
+          done
 
-          # 2. monitoring-dashboard must exist
-          if [ ! -f "supabase/functions/monitoring-dashboard/index.ts" ]; then
-            echo "CRITICAL: monitoring-dashboard/index.ts missing"
-            FAILED=1
-          else
-            echo "✓ monitoring-dashboard present"
-          fi
-
-          # 3. predictions-feed must exist with VIP isolation
-          if [ ! -f "supabase/functions/predictions-feed/index.ts" ]; then
-            echo "CRITICAL: predictions-feed/index.ts missing"
-            FAILED=1
-          else
-            # Verify VIP fields are stripped when isVip=false
-            if ! grep -q 'isVip && pred' supabase/functions/predictions-feed/index.ts 2>/dev/null; then
-              echo "WARNING: VIP field stripping not found in predictions-feed"
-            else
-              echo "✓ VIP field stripping present in predictions-feed"
-            fi
-          fi
-
-          # 4. home-feed must derive VIP from JWT (not client body)
           if grep -n 'body\.isVip\|body\[.isVip' supabase/functions/home-feed/index.ts 2>/dev/null; then
-            echo "CRITICAL: home-feed trusts client isVip body param"
-            FAILED=1
+            echo "CRITICAL: home-feed trusts client isVip body param"; FAILED=1
           else
             echo "✓ home-feed derives VIP from server-side JWT check"
           fi
 
-          # 5. phase5IntegrityTests.ts must exist
-          if [ ! -f "services/phase5IntegrityTests.ts" ]; then
-            echo "CRITICAL: phase5IntegrityTests.ts missing"
-            FAILED=1
-          else
-            echo "✓ phase5IntegrityTests.ts present"
-          fi
-
-          if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "FAIL: Phase 5 prediction delivery checks failed."
-            exit 1
-          fi
+          if [ "$FAILED" -eq 1 ]; then echo "FAIL: Phase 5 checks failed."; exit 1; fi
           echo "✓ Phase 5 prediction delivery verified"
 
-      # ── Phase 7 Production Launch Validation ────────────────────────────
+      # ── Phase 7 Production Launch Validation ─────────────────────────────
       - name: Phase 7 controlled release checks
         run: |
           echo "Verifying Phase 7 production launch infrastructure..."
           FAILED=0
 
-          # 1. Feature flags service must exist
-          if [ ! -f "services/featureFlagService.ts" ]; then
-            echo "CRITICAL: featureFlagService.ts missing"
-            FAILED=1
-          else
-            echo "✓ featureFlagService.ts present"
-          fi
+          for f in "services/featureFlagService.ts" \
+                   "services/analyticsService.ts" \
+                   "services/sloService.ts" \
+                   "services/phase7ReleaseGate.ts"; do
+            if [ ! -f "$f" ]; then echo "CRITICAL: $f missing"; FAILED=1
+            else echo "✓ $f present"; fi
+          done
 
-          # 2. Analytics service must exist
-          if [ ! -f "services/analyticsService.ts" ]; then
-            echo "CRITICAL: analyticsService.ts missing"
-            FAILED=1
-          else
-            echo "✓ analyticsService.ts present"
-          fi
-
-          # 3. SLO service must exist
-          if [ ! -f "services/sloService.ts" ]; then
-            echo "CRITICAL: sloService.ts missing"
-            FAILED=1
-          else
-            echo "✓ sloService.ts present"
-          fi
-
-          # 4. Phase 7 release gate must exist
-          if [ ! -f "services/phase7ReleaseGate.ts" ]; then
-            echo "CRITICAL: phase7ReleaseGate.ts missing"
-            FAILED=1
-          else
-            echo "✓ phase7ReleaseGate.ts present"
-          fi
-
-          # 5. Operations runbook must exist
-          if [ ! -f "docs/phase7-operations-runbook.md" ]; then
-            echo "WARNING: phase7-operations-runbook.md missing"
-          else
-            echo "✓ phase7 operations runbook present"
-          fi
-
-          # 6. Analytics must not contain PII collection
           if grep -n 'email.*analytics\|phone.*track\|password.*event' services/analyticsService.ts 2>/dev/null; then
-            echo "CRITICAL: PII detected in analytics service"
-            FAILED=1
+            echo "CRITICAL: PII detected in analytics service"; FAILED=1
           else
             echo "✓ No PII in analytics service"
           fi
 
-          # 7. Feature flag kill switch defaults must all be 'true'
           if grep -n 'FLAG_DEFAULTS' services/featureFlagService.ts | grep -q 'false'; then
-            echo "CRITICAL: Kill switch defaults to false — fail-safe violated"
-            FAILED=1
+            echo "CRITICAL: Kill switch defaults to false — fail-safe violated"; FAILED=1
           else
             echo "✓ All kill switches default to enabled (fail-safe)"
           fi
 
-          # 8. Migration 0012 must exist
-          if [ ! -f "supabase/functions/migrations/0012_phase7_production_launch.sql" ]; then
-            echo "WARNING: migration 0012 documentation missing"
-          else
-            echo "✓ migration 0012 present"
-          fi
-
-          if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "FAIL: Phase 7 controlled release checks failed."
-            exit 1
-          fi
+          if [ "$FAILED" -eq 1 ]; then echo "FAIL: Phase 7 checks failed."; exit 1; fi
           echo "✓ Phase 7 controlled release verified"
 
       # ── Phase 6 Production Hardening Validation ──────────────────────────
@@ -441,66 +422,42 @@ jobs:
           echo "Verifying Phase 6 production hardening..."
           FAILED=0
 
-          # 1. Release gate test suite must exist
           if [ ! -f "services/phase6ReleaseGate.ts" ]; then
-            echo "CRITICAL: phase6ReleaseGate.ts missing"
-            FAILED=1
+            echo "CRITICAL: phase6ReleaseGate.ts missing"; FAILED=1
           else
             echo "✓ phase6ReleaseGate.ts present"
           fi
 
-          # 2. Production hardening docs must exist
-          if [ ! -f "docs/phase6-production-hardening.md" ]; then
-            echo "WARNING: phase6-production-hardening.md missing — add documentation"
-          else
-            echo "✓ phase6 documentation present"
-          fi
-
-          # 3. authGuard must use getUser() not manual JWT decode
           if grep -n 'jwt\.decode\|atob.*jwt\|parseJWT' supabase/functions/_shared/authGuard.ts 2>/dev/null; then
-            echo "CRITICAL: authGuard uses manual JWT decode instead of auth.getUser()"
-            FAILED=1
+            echo "CRITICAL: authGuard uses manual JWT decode"; FAILED=1
           else
-            echo "✓ authGuard uses supabase.auth.getUser() for identity verification"
+            echo "✓ authGuard uses supabase.auth.getUser()"
           fi
 
-          # 4. No hardcoded credentials in Edge Functions
           for file in supabase/functions/**/*.ts; do
             if grep -nE '(sk-[A-Za-z0-9]{32,}|AIza[0-9A-Za-z_-]{35}|gsk_[A-Za-z0-9]{50})' "$file" 2>/dev/null; then
-              echo "CRITICAL: Hardcoded API key found in $file"
-              FAILED=1
+              echo "CRITICAL: Hardcoded API key found in $file"; FAILED=1
             fi
           done
           echo "✓ No hardcoded API keys in Edge Functions"
 
-          # 5. All critical migrations present
           for migration in 0001 0002 0003 0004 0005 0006 0007 0008; do
             FOUND=$(ls supabase/migrations/${migration}_*.sql 2>/dev/null | head -1)
-            if [ -z "$FOUND" ]; then
-              echo "CRITICAL: Migration ${migration} missing"
-              FAILED=1
-            fi
+            if [ -z "$FOUND" ]; then echo "CRITICAL: Migration ${migration} missing"; FAILED=1; fi
           done
           echo "✓ Core migrations 0001–0008 present"
 
-          # 6. Bundle IDs consistent
           ANDROID_PKG=$(node -e "const c=require('./app.json'); console.log(c.expo.android.package)" 2>/dev/null || echo "")
           IOS_BUNDLE=$(node -e "const c=require('./app.json'); console.log(c.expo.ios.bundleIdentifier)" 2>/dev/null || echo "")
           if [ "$ANDROID_PKG" != "com.predictxta.sports" ]; then
-            echo "CRITICAL: Android package mismatch: $ANDROID_PKG"
-            FAILED=1
+            echo "CRITICAL: Android package mismatch: $ANDROID_PKG"; FAILED=1
           fi
           if [ "$IOS_BUNDLE" != "com.predictxta.sports" ]; then
-            echo "CRITICAL: iOS bundle ID mismatch: $IOS_BUNDLE"
-            FAILED=1
+            echo "CRITICAL: iOS bundle ID mismatch: $IOS_BUNDLE"; FAILED=1
           fi
           echo "✓ Bundle IDs consistent: $ANDROID_PKG"
 
-          if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "FAIL: Phase 6 production hardening checks failed."
-            exit 1
-          fi
+          if [ "$FAILED" -eq 1 ]; then echo "FAIL: Phase 6 checks failed."; exit 1; fi
           echo "✓ Phase 6 production hardening verified"
 
       # ── Phase 3 Sports Data Platform Validation ───────────────────────────
@@ -509,63 +466,32 @@ jobs:
           echo "Verifying Phase 3 sports data platform..."
           FAILED=0
 
-          # 1. Removed sports must not appear in SupportedSport type
           for sport in "'formula1'" "'afl'" "'formula-1'" "'f1'"; do
             HITS=$(grep -n "$sport" services/matchService.ts 2>/dev/null | grep -i 'supported\|type\|union' || true)
             if [ -n "$HITS" ]; then
-              echo "CRITICAL: Removed sport $sport found in matchService SupportedSport: $HITS"
-              FAILED=1
+              echo "CRITICAL: Removed sport $sport found in matchService SupportedSport: $HITS"; FAILED=1
             fi
           done
 
-          # 2. Provider config must exist
-          if [ ! -f "services/providers/providerConfig.ts" ]; then
-            echo "CRITICAL: services/providers/providerConfig.ts missing"
-            FAILED=1
-          else
-            echo "✓ providerConfig.ts present"
-          fi
+          for f in "services/providers/providerConfig.ts" \
+                   "services/providers/providerTypes.ts" \
+                   "supabase/migrations/0008_provider_entity_mapping.sql"; do
+            if [ ! -f "$f" ]; then echo "CRITICAL: $f missing"; FAILED=1
+            else echo "✓ $f present"; fi
+          done
 
-          # 3. Provider types must exist
-          if [ ! -f "services/providers/providerTypes.ts" ]; then
-            echo "CRITICAL: services/providers/providerTypes.ts missing"
-            FAILED=1
-          else
-            echo "✓ providerTypes.ts present"
-          fi
-
-          # 4. Migration 0008 must exist
-          if [ ! -f "supabase/migrations/0008_provider_entity_mapping.sql" ]; then
-            echo "CRITICAL: migration 0008_provider_entity_mapping.sql missing"
-            FAILED=1
-          else
-            echo "✓ migration 0008 present"
-          fi
-
-          # 5. REMOVED_SPORTS guard must exist in fetch-matches
           if ! grep -q 'REMOVED_SPORTS' supabase/functions/fetch-matches/index.ts 2>/dev/null; then
-            echo "CRITICAL: REMOVED_SPORTS guard missing from fetch-matches"
-            FAILED=1
+            echo "CRITICAL: REMOVED_SPORTS guard missing from fetch-matches"; FAILED=1
           else
             echo "✓ REMOVED_SPORTS guard present in fetch-matches"
           fi
 
-          # 6. ALL_SPORTS in fetch-matches must not include formula1 or afl
-          if grep -q "'formula1'\|'afl'" supabase/functions/fetch-matches/index.ts 2>/dev/null | grep -q 'ALL_SPORTS\['; then
-            echo "CRITICAL: Removed sports found in fetch-matches ALL_SPORTS array"
-            FAILED=1
-          fi
-
-          if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "FAIL: Phase 3 sports data platform checks failed."
-            exit 1
-          fi
+          if [ "$FAILED" -eq 1 ]; then echo "FAIL: Phase 3 checks failed."; exit 1; fi
           echo "✓ Phase 3 sports data platform verified"
 
-  # ─── Stage 5: EAS Production Build (main branch only) ─────────────────────
+  # ─── Stage 10: EAS Production Build (main branch only) ────────────────────
   build-production:
-    name: EAS Production Build (Android)
+    name: EAS Production Build (Android — SDK 54, API 36)
     runs-on: ubuntu-latest
     needs: validate
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -573,17 +499,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
           run_install: false
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
       - name: Install dependencies (frozen)
         run: pnpm install --frozen-lockfile
@@ -596,7 +522,6 @@ jobs:
 
       - name: EAS Build (production AAB — SDK 54, API 36)
         run: eas build --platform android --profile production --non-interactive --no-wait
-        # SDK 54 + API 36: meets Google Play deadline (Aug 31 2026). Upgraded from SDK 53.
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

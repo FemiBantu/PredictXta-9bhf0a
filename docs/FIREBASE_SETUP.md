@@ -58,7 +58,7 @@ Mobile App ──► firebase-live edge fn ──► Firebase RTDB ──► Liv
 ## Step 3 — Register iOS App
 
 1. Click the **iOS** icon on the project overview page
-2. **iOS bundle ID:** `com.predictxta.app`
+2. **iOS bundle ID:** `com.predictxta.sports`  ← canonical iOS Bundle ID (same as Android)
 3. **App nickname:** PredictXta iOS
 4. Click **Register app** → **Download `GoogleService-Info.plist`**
 5. Place at the project root (same directory as `app.json`)
@@ -298,7 +298,7 @@ The placeholder files in the repository contain only dummy values and are safe t
 - [ ] `google-services.json` has `package_name: com.predictxta.sports`
 - [ ] EAS secret `GOOGLE_SERVICES_JSON` created (`eas secret:list` shows it)
 - [ ] Real `GoogleService-Info.plist` downloaded from Firebase Console
-- [ ] `GoogleService-Info.plist` has `BUNDLE_ID: com.predictxta.app`
+- [ ] `GoogleService-Info.plist` has `BUNDLE_ID: com.predictxta.sports`
 - [ ] EAS secret `GOOGLE_SERVICES_PLIST` created
 - [ ] `FIREBASE_SERVICE_ACCOUNT_JSON` set in Supabase secrets (replaces legacy FIREBASE_SERVER_KEY)
 - [ ] `FIREBASE_DATABASE_URL` set in Supabase secrets
