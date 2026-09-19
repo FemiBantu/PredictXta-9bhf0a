@@ -1,3 +1,4 @@
+
 /**
  * services/sportsDataNormalizer.ts
  *
@@ -69,22 +70,46 @@ export interface SportConfig {
 }
 
 export const SPORT_CONFIGS: Record<string, SportConfig> = {
-  football: { drawPossible: true, hasHalftime: true, ouUnit: 'goals', defaultOULine: 2.5, hasCorners: true, hasCards: true, hasBTTS: true },
-  soccer: { drawPossible: true, hasHalftime: true, ouUnit: 'goals', defaultOULine: 2.5, hasCorners: true, hasCards: true, hasBTTS: true },
-  basketball: { drawPossible: false, hasHalftime: true, ouUnit: 'points', defaultOULine: 215.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  tennis: { drawPossible: false, hasHalftime: false, ouUnit: 'sets', defaultOULine: 2.5, hasCorners: false, hasCards: false, hasBTTS: true },
-  cricket: { drawPossible: true, hasHalftime: false, ouUnit: 'runs', defaultOULine: 320.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  baseball: { drawPossible: false, hasHalftime: true, ouUnit: 'runs', defaultOULine: 8.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  hockey: { drawPossible: false, hasHalftime: true, ouUnit: 'goals', defaultOULine: 5.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  rugby: { drawPossible: true, hasHalftime: true, ouUnit: 'points', defaultOULine: 42.5, hasCorners: false, hasCards: true, hasBTTS: true },
-  mma: { drawPossible: false, hasHalftime: false, ouUnit: 'rounds', defaultOULine: 2.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  boxing: { drawPossible: false, hasHalftime: false, ouUnit: 'rounds', defaultOULine: 8.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  handball: { drawPossible: false, hasHalftime: true, ouUnit: 'goals', defaultOULine: 55.5, hasCorners: false, hasCards: true, hasBTTS: false },
-  volleyball: { drawPossible: false, hasHalftime: false, ouUnit: 'sets', defaultOULine: 3.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  'american-football': { drawPossible: false, hasHalftime: true, ouUnit: 'points', defaultOULine: 48.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  formula1: { drawPossible: false, hasHalftime: false, ouUnit: 'positions', defaultOULine: 3.5, hasCorners: false, hasCards: false, hasBTTS: false },
-  esports: { drawPossible: false, hasHalftime: false, ouUnit: 'maps', defaultOULine: 2.5, hasCorners: false, hasCards: false, hasBTTS: false },
+  // ── Canonical 13 supported sports ──────────────────────────────────────────
+  football:             { drawPossible: true,  hasHalftime: true,  ouUnit: 'goals',  defaultOULine: 2.5,   hasCorners: true,  hasCards: true,  hasBTTS: true  },
+  soccer:               { drawPossible: true,  hasHalftime: true,  ouUnit: 'goals',  defaultOULine: 2.5,   hasCorners: true,  hasCards: true,  hasBTTS: true  }, // alias → football
+  basketball:           { drawPossible: false, hasHalftime: true,  ouUnit: 'points', defaultOULine: 215.5, hasCorners: false, hasCards: false, hasBTTS: false },
+  tennis:               { drawPossible: false, hasHalftime: false, ouUnit: 'sets',   defaultOULine: 2.5,   hasCorners: false, hasCards: false, hasBTTS: false },
+  cricket:              { drawPossible: true,  hasHalftime: false, ouUnit: 'runs',   defaultOULine: 320.5, hasCorners: false, hasCards: false, hasBTTS: false },
+  baseball:             { drawPossible: false, hasHalftime: true,  ouUnit: 'runs',   defaultOULine: 8.5,   hasCorners: false, hasCards: false, hasBTTS: false },
+  hockey:               { drawPossible: false, hasHalftime: true,  ouUnit: 'goals',  defaultOULine: 5.5,   hasCorners: false, hasCards: false, hasBTTS: false },
+  rugby:                { drawPossible: true,  hasHalftime: true,  ouUnit: 'points', defaultOULine: 42.5,  hasCorners: false, hasCards: true,  hasBTTS: false },
+  mma:                  { drawPossible: false, hasHalftime: false, ouUnit: 'rounds', defaultOULine: 2.5,   hasCorners: false, hasCards: false, hasBTTS: false },
+  boxing:               { drawPossible: true,  hasHalftime: false, ouUnit: 'rounds', defaultOULine: 8.5,   hasCorners: false, hasCards: false, hasBTTS: false }, // technical draw possible
+  handball:             { drawPossible: true,  hasHalftime: true,  ouUnit: 'goals',  defaultOULine: 55.5,  hasCorners: false, hasCards: true,  hasBTTS: true  },
+  volleyball:           { drawPossible: false, hasHalftime: false, ouUnit: 'sets',   defaultOULine: 3.5,   hasCorners: false, hasCards: false, hasBTTS: false },
+  'american-football':  { drawPossible: false, hasHalftime: true,  ouUnit: 'points', defaultOULine: 48.5,  hasCorners: false, hasCards: false, hasBTTS: false },
+  esports:              { drawPossible: false, hasHalftime: false, ouUnit: 'maps',   defaultOULine: 2.5,   hasCorners: false, hasCards: false, hasBTTS: false },
+  // ── REMOVED SPORTS — these keys are intentionally absent to prevent leakage ──
+  // formula1 / afl / badminton / table-tennis / snooker / darts:
+  // do NOT add entries here; add to REMOVED_SPORTS_GUARD below instead.
 };
+
+/**
+ * REMOVED_SPORTS_GUARD — throw if any removed sport reaches the normalizer.
+ * Call this in production ingestion before storing any match record.
+ */
+export const REMOVED_SPORTS: ReadonlySet<string> = new Set([
+  'formula1', 'formula-1', 'formula_1', 'formula 1', 'motorsports', 'motor sport',
+  'afl', 'australian-football', 'australian_football',
+  'badminton', 'table-tennis', 'table_tennis', 'snooker', 'darts',
+  'cycling', 'athletics', 'squash', 'golf',
+]);
+
+export function assertNotRemovedSport(sport: string): void {
+  const normalized = sport.toLowerCase().trim();
+  if (REMOVED_SPORTS.has(normalized)) {
+    throw new Error(
+      `[SportsNormalizer] Removed sport "${sport}" reached normalizer. ` +
+      'This is a data pipeline integrity violation.',
+    );
+  }
+}
 
 export function getSportConfig(sport: string): SportConfig {
   return SPORT_CONFIGS[sport.toLowerCase()] ?? SPORT_CONFIGS['football'];
@@ -171,7 +196,7 @@ export function normalizeDateToISO(raw: string | number | null | undefined): str
 }
 
 // ─── API-Football Adapter ─────────────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Removed the @typescript-eslint/no-explicit-any eslint-disable comment
 export function adaptApiFootballMatch(raw: any): UnifiedMatch {
   const fixture = raw?.fixture ?? raw ?? {};
   const teams = raw?.teams ?? {};
@@ -213,7 +238,7 @@ export function adaptApiFootballMatch(raw: any): UnifiedMatch {
 }
 
 // ─── TheSportsDB Adapter ──────────────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Removed the @typescript-eslint/no-explicit-any eslint-disable comment
 export function adaptTheSportsDbEvent(raw: any): UnifiedMatch {
   const homeScore = raw?.intHomeScore !== null ? Number(raw.intHomeScore) : 0;
   const awayScore = raw?.intAwayScore !== null ? Number(raw.intAwayScore) : 0;
@@ -223,18 +248,53 @@ export function adaptTheSportsDbEvent(raw: any): UnifiedMatch {
   );
 
   // Infer sport from TheSportsDB sport field
+  // IMPORTANT: removed sports (formula1, afl, etc.) are mapped to null → record rejected
   const rawSport = (raw?.strSport ?? 'Soccer').toLowerCase();
-  const sportMap: Record<string, string> = {
-    soccer: 'football', football: 'football',
-    basketball: 'basketball', tennis: 'tennis',
-    baseball: 'baseball', hockey: 'hockey', 'ice hockey': 'hockey',
-    rugby: 'rugby', 'rugby league': 'rugby', 'rugby union': 'rugby',
-    cricket: 'cricket', 'american football': 'american-football',
-    handball: 'handball', volleyball: 'volleyball',
-    mma: 'mma', 'mixed martial arts': 'mma', boxing: 'boxing',
-    esports: 'esports', 'formula 1': 'formula1', 'motor sport': 'formula1',
+  const sportMap: Record<string, string | null> = {
+    soccer:               'football',
+    football:             'football',
+    basketball:           'basketball',
+    tennis:               'tennis',
+    baseball:             'baseball',
+    hockey:               'hockey',
+    'ice hockey':         'hockey',
+    rugby:                'rugby',
+    'rugby league':       'rugby',
+    'rugby union':        'rugby',
+    cricket:              'cricket',
+    'american football':  'american-football',
+    handball:             'handball',
+    volleyball:           'volleyball',
+    mma:                  'mma',
+    'mixed martial arts': 'mma',
+    boxing:               'boxing',
+    esports:              'esports',
+    'e-sports':           'esports',
+    // REMOVED SPORTS — map to null to signal rejection at ingestion
+    'formula 1':          null,
+    'formula1':           null,
+    'motor sport':        null,
+    'motorsport':         null,
+    'motorsports':        null,
+    'afl':                null,
+    'australian rules':   null,
+    'golf':               null,
+    'cycling':            null,
+    'athletics':          null,
+    'badminton':          null,
+    'table tennis':       null,
+    'snooker':            null,
+    'darts':              null,
+    'squash':             null,
   };
-  const sport = sportMap[rawSport] ?? 'football';
+  const sportResolved = sportMap[rawSport];
+  // Reject records for removed/unsupported sports
+  if (sportResolved === null) {
+    throw new Error(
+      `[TheSportsDB] Removed/unsupported sport "${rawSport}" reached normalizer — record rejected.`,
+    );
+  }
+  const sport = sportResolved ?? 'football';
 
   const match: UnifiedMatch = {
     id: String(raw?.idEvent ?? Math.random()),
@@ -262,7 +322,7 @@ export function adaptTheSportsDbEvent(raw: any): UnifiedMatch {
 }
 
 // ─── Firebase RTDB Adapter ────────────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Removed the @typescript-eslint/no-explicit-any eslint-disable comment
 export function adaptFirebaseMatch(raw: any, id: string): UnifiedMatch {
   const match: UnifiedMatch = {
     id: id ?? String(raw?.id ?? Math.random()),
@@ -291,7 +351,7 @@ export function adaptFirebaseMatch(raw: any, id: string): UnifiedMatch {
 
 // ─── Supabase DB Row Adapter ──────────────────────────────────────────────────
 // Centralised row → Match mapper used by all services
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Removed the @typescript-eslint/no-explicit-any eslint-disable comment
 export function adaptSupabaseRow(row: any): UnifiedMatch {
   if (!row) throw new Error('adaptSupabaseRow: null row');
 
@@ -337,7 +397,7 @@ export function adaptSupabaseRow(row: any): UnifiedMatch {
  * Normalize an array of raw match rows from any source.
  * Auto-detects source from the row structure.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Removed the @typescript-eslint/no-explicit-any eslint-disable comment
 export function normalizeMatchBatch(rows: any[], source: 'supabase' | 'api-football' | 'thesportsdb' | 'firebase' = 'supabase'): UnifiedMatch[] {
   return rows
     .filter((r) => r != null)
