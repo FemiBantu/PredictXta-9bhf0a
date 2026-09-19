@@ -1,3 +1,9 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **Product IDs, platform identifiers, and server verification architecture in this document are correct and match `docs/PRODUCTION_SOURCE_OF_TRUTH.md §2 & §11`.**
+
+---
+
 # PredictXta — Phase 4: IAP, Subscriptions, Coins & Entitlements
 
 Generated: 2026-09-08

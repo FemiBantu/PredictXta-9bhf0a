@@ -6,7 +6,7 @@
   },
   "build": {
     "development": {
-      "_comment": "Development: reads real google-services.json from local disk (never committed to git)",
+      "_comment": "Development: reads real google-services.json from local disk (never committed to git). Requires EAS CLI >=16 and a real EAS build — not Expo Go.",
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
@@ -25,7 +25,7 @@
       }
     },
     "preview": {
-      "_comment": "Preview: injects credentials from EAS secrets GOOGLE_SERVICES_JSON / GOOGLE_SERVICES_PLIST",
+      "_comment": "Preview (internal): injects credentials from EAS secrets. Use for TestFlight internal / Play internal track testing.",
       "distribution": "internal",
       "channel": "preview",
       "ios": {
@@ -43,7 +43,7 @@
       }
     },
     "production": {
-      "_comment": "Production: injects credentials from EAS secrets GOOGLE_SERVICES_JSON / GOOGLE_SERVICES_PLIST",
+      "_comment": "Production AAB (Android) + IPA (iOS) — signed, optimised, ready for store submission.",
       "autoIncrement": true,
       "channel": "production",
       "ios": {
@@ -57,11 +57,12 @@
         "image": "latest"
       },
       "env": {
-        "APP_ENV": "production"
+        "APP_ENV": "production",
+        "EXPO_METRO_PLATFORM": "android"
       }
     },
     "production-apk": {
-      "_comment": "Same as production but outputs APK for sideloading / direct download",
+      "_comment": "Same as production but outputs APK for sideloading / direct download / Firebase App Distribution.",
       "extends": "production",
       "android": {
         "buildType": "apk"
