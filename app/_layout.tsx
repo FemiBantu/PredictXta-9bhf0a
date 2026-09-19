@@ -195,16 +195,18 @@ function PasswordResetDeepLinkHandler() {
     const supabase = getSupabaseClient();
 
     // ── Google OAuth callback ─────────────────────────────────────────────
-    // Detect OAuth callback broadly: path-based OR any predictxta:// URL with
-    // a code/token parameter. This catches both PKCE and implicit flows and
-    // ensures resolvePendingOAuth() is called before the 10s timeout expires,
-    // eliminating false E006 errors on Android Chrome Custom Tabs.
+    // Detect OAuth callback broadly: HTTPS App Links URI first, then the
+    // custom scheme fallback, then any predictxta:// URL with a code/token.
+    // The HTTPS check must come first so Android HTTPS App Links are handled
+    // before any custom-scheme check, avoiding double-processing.
     const isOAuthCallback = (
+      url.startsWith('https://predictxta.app/auth/callback') ||
       url.includes('/auth/callback') ||
       url.includes('auth-callback') ||
       url.includes('predictxta://auth') ||
       (url.startsWith('predictxta://') && url.includes('code=')) ||
-      (url.startsWith('predictxta://') && url.includes('access_token='))
+      (url.startsWith('predictxta://') && url.includes('access_token=')) ||
+      (url.startsWith('https://predictxta.app') && url.includes('code='))
     );
     if (isOAuthCallback && !url.includes('reset-password') && !url.includes('type=recovery')) {
       try {
