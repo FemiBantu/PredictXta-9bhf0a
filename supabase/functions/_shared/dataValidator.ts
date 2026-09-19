@@ -67,10 +67,56 @@ function sanitiseUrl(v: unknown): string | null {
 }
 
 // ─── Supported enums ────────────────────────────────────────────────────────
+/**
+ * VALID_SPORTS — exactly the 13 canonical sports supported by PredictXta.
+ * DO NOT add removed sports (formula1, afl, golf, cycling, etc.) here.
+ * Any record with a sport not in this set is flagged as a data quality warning
+ * and its sport field is normalised to 'football' as a safe default.
+ */
 const VALID_SPORTS = new Set([
-  'football', 'basketball', 'tennis', 'cricket', 'mma', 'baseball',
-  'hockey', 'rugby', 'volleyball', 'american_football', 'golf',
-  'cycling', 'formula1', 'esports',
+  'football',
+  'basketball',
+  'tennis',
+  'cricket',
+  'baseball',
+  'hockey',
+  'rugby',
+  'american-football',  // canonical key (with hyphen)
+  'american_football',  // accept underscore variant — normalised below
+  'mma',
+  'boxing',
+  'volleyball',
+  'handball',
+  'esports',
+]);
+
+/** Normalise any accepted variant to the DB canonical key. */
+function normalizeSportKey(raw: string): string {
+  switch (raw.toLowerCase().trim()) {
+    case 'soccer':               return 'football';
+    case 'american_football':    return 'american-football';
+    case 'american football':    return 'american-football';
+    case 'ice_hockey':           return 'hockey';
+    case 'ice hockey':           return 'hockey';
+    case 'ice-hockey':           return 'hockey';
+    case 'mixed_martial_arts':   return 'mma';
+    case 'mixed martial arts':   return 'mma';
+    case 'e-sports':             return 'esports';
+    case 'e_sports':             return 'esports';
+    case 'rugby league':         return 'rugby';
+    case 'rugby union':          return 'rugby';
+    case 'rugby_league':         return 'rugby';
+    case 'rugby_union':          return 'rugby';
+    default:                     return raw.toLowerCase().trim();
+  }
+}
+
+/** Removed sports that must never appear in production data. */
+const REMOVED_SPORTS = new Set([
+  'formula1', 'formula-1', 'formula_1', 'formula 1', 'motorsports', 'motor sport',
+  'afl', 'australian-football', 'australian_football', 'australian rules',
+  'badminton', 'table-tennis', 'table_tennis', 'snooker', 'darts',
+  'cycling', 'athletics', 'squash', 'golf',
 ]);
 const VALID_MATCH_STATUSES = new Set(['upcoming', 'live', 'finished', 'postponed', 'cancelled']);
 const VALID_EVENT_TYPES = new Set([
@@ -146,7 +192,12 @@ export function validateMatch(raw: RawMatchInput): ValidationResult<SanitisedMat
     errors.push('match_time must be a valid ISO timestamp');
     dqScore -= 15;
   }
-  if (!sport || !VALID_SPORTS.has(sport)) {
+  const sportNorm = normalizeSportKey(sport || '');
+  // Hard-reject removed sports — data integrity violation
+  if (REMOVED_SPORTS.has(sportNorm || sport)) {
+    errors.push(`Removed/unsupported sport "${sport}" — record rejected. PredictXta supports exactly 13 canonical sports.`);
+    dqScore -= 40;
+  } else if (!sport || !VALID_SPORTS.has(sportNorm)) {
     warnings.push(`Unknown sport "${sport}" — defaulting to football`);
     dqScore -= 5;
   }
@@ -181,7 +232,7 @@ export function validateMatch(raw: RawMatchInput): ValidationResult<SanitisedMat
 
   const sanitised: SanitisedMatch = {
     external_id: externalId || `generated-${homeTeam}-${awayTeam}-${matchTime}`.replace(/\s/g, '_'),
-    sport: VALID_SPORTS.has(sport) ? sport : 'football',
+    sport: VALID_SPORTS.has(sportNorm) ? sportNorm : (VALID_SPORTS.has(sport) ? sport : 'football'),
     home_team: homeTeam,
     away_team: awayTeam,
     home_score: homeScore,
