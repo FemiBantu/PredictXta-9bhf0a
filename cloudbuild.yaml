@@ -1,6 +1,11 @@
 # ── Cloud Build pipeline — PredictXta ─────────────────────────────────────────
 #
-# Substitution variables (configure in Cloud Build trigger UI or --substitutions flag):
+# Port strategy:
+#   Dockerfile:  EXPOSE 8080, serve -l 8080  (production listener)
+#   Cloud Run:   --port=8080                 (matches exactly — no conflict)
+#   Metro dev:   8081 (Expo default)         (dev only, never in production)
+#
+# Substitution variables (configure in Cloud Build trigger UI):
 #
 #   _EXPO_PUBLIC_SUPABASE_URL      — OnSpace/Supabase backend URL
 #                                    e.g. https://osmkbrryalhtpnayosmk.backend.onspace.ai

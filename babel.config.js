@@ -10,34 +10,67 @@ try { require('./scripts/patch-hermes-parser-plugin.js'); } catch (e) {
 }
 
 module.exports = function (api) {
-  api.cache(false)
+  // Cache per-environment so native and web get different transforms.
+  // Using api.cache(true) is safe here because we inspect env vars below
+  // and the BABEL_ENV / NODE_ENV values are stable within a given build.
+  api.cache.using(() => process.env.BABEL_ENV ?? process.env.NODE_ENV ?? 'development');
+
+  // Detect web / SSR context.
+  // Metro sets BABEL_ENV='development'|'production' for native;
+  // expo export --platform web sets EXPO_METRO_PLATFORM='web' or 'server'.
+  // We must NOT rewrite IAP/nitro imports for native builds — those packages
+  // must resolve to their real native implementations via Metro resolveRequest.
+  const isWebOrSSR =
+    process.env.EXPO_METRO_PLATFORM === 'web' ||
+    process.env.EXPO_METRO_PLATFORM === 'server' ||
+    process.env.EXPO_TARGET === 'web';
+
   return {
     presets: ['babel-preset-expo'],
     plugins: [
-      // Inline Babel plugin: rewrite `expo-web-browser` imports to our shim
-      // at source-transform time — before Metro bundling, before caching,
-      // and before any native Android module can be initialized under Hermes.
+      // Inline Babel plugin: rewrite native-only imports to safe shims.
+      //
+      // IMPORTANT: react-native-iap and react-native-nitro-modules are ONLY
+      // shimmed for web/SSR builds. Native builds (android/ios) must receive
+      // the real packages so StoreKit / Google Play Billing link correctly.
+      //
+      // expo-video is shimmed everywhere via Metro resolveRequest (safer),
+      // but we keep the Babel-level shim for SSR safety.
       function nativeModuleShims() {
-        const webBrowserShim = path.resolve(__dirname, 'shims/expo-web-browser/index.js');
-        const expoVideoShim = path.resolve(__dirname, 'shims/expo-video/index.js');
-        const iapShim = path.resolve(__dirname, 'shims/react-native-iap/index.js');
-        const nitroShim = path.resolve(__dirname, 'shims/react-native-nitro-modules/index.js');
+        const webBrowserShim   = path.resolve(__dirname, 'shims/expo-web-browser/index.js');
+        const expoVideoShim    = path.resolve(__dirname, 'shims/expo-video/index.js');
+        const iapShim          = path.resolve(__dirname, 'shims/react-native-iap/index.js');
+        const nitroShim        = path.resolve(__dirname, 'shims/react-native-nitro-modules/index.js');
         const hermesParserStub = path.resolve(__dirname, 'stubs/hermes-parser-plugin.js');
-        const SHIM_MAP = {
-          'expo-web-browser': webBrowserShim,
-          'expo-video': expoVideoShim,
-          'react-native-iap': iapShim,
-          'react-native-nitro-modules': nitroShim,
-          'babel-plugin-syntax-hermes-parser': hermesParserStub,
+
+        // Web/SSR: shim ALL native-only modules
+        const WEB_SHIM_MAP = {
+          'expo-web-browser':                   webBrowserShim,
+          'expo-video':                         expoVideoShim,
+          'react-native-iap':                   iapShim,
+          'react-native-nitro-modules':         nitroShim,
+          'babel-plugin-syntax-hermes-parser':  hermesParserStub,
         };
-        // Prefix map for sub-path imports (e.g. 'expo-video/build/VideoView')
-        const SHIM_PREFIX_MAP = {
-          'expo-video/': expoVideoShim,
-          'expo-web-browser/': webBrowserShim,
-          'react-native-iap/': iapShim,
-          'react-native-nitro-modules/': nitroShim,
+        const WEB_SHIM_PREFIX_MAP = {
+          'expo-video/':                        expoVideoShim,
+          'expo-web-browser/':                  webBrowserShim,
+          'react-native-iap/':                  iapShim,
+          'react-native-nitro-modules/':        nitroShim,
           'babel-plugin-syntax-hermes-parser/': hermesParserStub,
         };
+
+        // Native: ONLY shim the hermes-parser Babel plugin (not IAP/nitro).
+        // expo-web-browser and expo-video are handled by Metro resolveRequest.
+        const NATIVE_SHIM_MAP = {
+          'babel-plugin-syntax-hermes-parser': hermesParserStub,
+        };
+        const NATIVE_SHIM_PREFIX_MAP = {
+          'babel-plugin-syntax-hermes-parser/': hermesParserStub,
+        };
+
+        const SHIM_MAP        = isWebOrSSR ? WEB_SHIM_MAP        : NATIVE_SHIM_MAP;
+        const SHIM_PREFIX_MAP = isWebOrSSR ? WEB_SHIM_PREFIX_MAP : NATIVE_SHIM_PREFIX_MAP;
+
         function resolveShim(val) {
           if (SHIM_MAP[val]) return SHIM_MAP[val];
           for (const prefix of Object.keys(SHIM_PREFIX_MAP)) {
@@ -67,5 +100,5 @@ module.exports = function (api) {
         };
       },
     ],
-  }
+  };
 }

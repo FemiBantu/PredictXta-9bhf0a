@@ -1,7 +1,8 @@
 # ── PredictXta Web Production Image ──────────────────────────────────────────
-# SDK 54 / React Native 0.81 / API 36 (Google Play compliant)
+# SDK 57 / React Native 0.79 / API 36 (Google Play compliant)
 # Package manager: pnpm (pnpm-lock.yaml is the authoritative lockfile)
-FROM node:20-alpine
+# Node 22 LTS required for SDK 57 toolchain (v8 snapshots, Hermes 0.12+)
+FROM node:22-alpine
 
 WORKDIR /app
 
@@ -16,7 +17,9 @@ ENV EXPO_PUBLIC_SUPABASE_ANON_KEY=${EXPO_PUBLIC_SUPABASE_ANON_KEY}
 # ── Install pnpm ───────────────────────────────────────────────────────────────
 # pnpm is the authoritative package manager for this project.
 # pnpm-lock.yaml must not diverge from package.json.
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# Install pnpm via corepack. Node 22 ships corepack; pnpm 10 is the LTS
+# version aligned with SDK 57's peer dependency requirements.
+RUN corepack enable && corepack prepare pnpm@10 --activate
 
 # ── Dependencies ───────────────────────────────────────────────────────────────
 # Copy both manifests so pnpm can validate the lockfile.
@@ -34,7 +37,9 @@ RUN echo "EXPO_PUBLIC_SUPABASE_URL=${EXPO_PUBLIC_SUPABASE_URL}" > .env && \
     echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${EXPO_PUBLIC_SUPABASE_ANON_KEY}" >> .env
 
 # ── Web export ─────────────────────────────────────────────────────────────────
-# Expo SDK 54 outputs to /dist (Metro bundler, static output).
+# Expo SDK 57 outputs to /dist (Metro bundler, static output).
+# EXPO_METRO_PLATFORM=web ensures babel.config.js applies web shims (not native).
+ENV EXPO_METRO_PLATFORM=web
 RUN npx expo export --platform web
 
 # ── Runtime server ─────────────────────────────────────────────────────────────
