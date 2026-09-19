@@ -1,3 +1,10 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **Bundle IDs and product IDs in this document are correct (verified against §2 and §11 of the source of truth).  
+> Version numbers and build commands should be cross-checked with `docs/PRODUCTION_SOURCE_OF_TRUTH.md §7–§11`.**
+
+---
+
 # PredictXta — App Store & Play Store Submission Guide
 
 Updated: 2026-09-08 (Phase 2 — corrected to canonical bundle IDs)

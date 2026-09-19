@@ -1,3 +1,10 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **Kill switches, incident procedures, and model governance in this document remain valid operational references.  
+> Canonical feature flags and kill-switch naming are defined in `docs/PRODUCTION_SOURCE_OF_TRUTH.md §12`.**
+
+---
+
 # PredictXta — Phase 7 Operations Runbook
 
 ## Status: PHASE 7 COMPLETE

@@ -1,4 +1,12 @@
-# PredictXta — Phase 1 Audit Report
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **This document describes the SDK 54 migration state as of 2026-09-08.  
+> Current canonical target: Expo SDK 57 · React Native 0.81.  
+> All version numbers and package targets below have been superseded.**
+
+---
+
+# PredictXta — Phase 1 Audit Report (HISTORICAL)
 # Production Foundation, SDK 54 Migration & Dependency Stabilization
 
 Generated: 2026-09-08

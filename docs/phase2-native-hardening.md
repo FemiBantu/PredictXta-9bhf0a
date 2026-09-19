@@ -1,3 +1,10 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **Bundle IDs and deep-link scheme in this document are correct and match the canonical values.  
+> All version numbers (SDK, RN) are historical; canonical values are in `docs/PRODUCTION_SOURCE_OF_TRUTH.md §7`.**
+
+---
+
 # PredictXta — Phase 2 Native Production Hardening Report
 
 Generated: 2026-09-08

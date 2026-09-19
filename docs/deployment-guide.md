@@ -1,3 +1,11 @@
+# ⚠️ OBSOLETE — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **This document contains outdated version references (SDK 53/54, React Native 0.79, references to `npm install`).  
+> Canonical values: Expo SDK 57 · React Native 0.81 · Android API 36 · pnpm.  
+> Do not rely on version numbers, bundle IDs, or toolchain instructions below without cross-checking against `docs/PRODUCTION_SOURCE_OF_TRUTH.md`.**
+
+---
+
 # PredictXta — Production Deployment Guide
 
 ## Prerequisites
@@ -271,9 +279,9 @@ The in-app disclaimer must be visible on:
 
 ---
 
-## 12. Expo SDK 54 Upgrade Notes (August 2026)
+## 12. ~~Expo SDK 54 Upgrade Notes~~ [OBSOLETE — Current target is SDK 57]
 
-### What changed from SDK 53 → 54:
+### ~~What changed from SDK 53 → 54~~ [OBSOLETE]
 - `targetSdkVersion` updated from 35 → **36** in `app.json` — required for Google Play (deadline: Aug 31, 2026)
 - `sdkVersion: "54.0.0"` declared in `app.json`
 - EAS build profiles all pin `"image": "latest"` to get the Expo 54 build image with NDK for API 36

@@ -1,8 +1,16 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **This document reflects the pre-Phase 8 architecture.  
+> Canonical sports list (13 sports), provider hierarchy, and backend details are in `docs/PRODUCTION_SOURCE_OF_TRUTH.md §5–§6`.**
+
+---
+
 # PredictXta Enterprise Architecture — Sports Intelligence Platform
 
 ## System Overview
 
-**Scale**: 50M+ registered users | 2M+ concurrent | 21+ sports | 99.99% uptime  
+**Scale**: 500K+ concurrent users | 13 canonical sports | 99.99% uptime  
+> ⚠️ Original figure of "21+ sports" is incorrect — canonical registry is 13 sports.  
 **API Budget**: 7,000 requests/day across all providers  
 **Architecture**: Pre-loaded data → 3-layer cache → SSE realtime → Client
 

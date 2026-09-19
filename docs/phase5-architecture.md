@@ -1,3 +1,10 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **Sports provider hierarchy, canonical 13-sport registry, and no-fabrication rules in this document are correct.  
+> Canonical values are also defined in `docs/PRODUCTION_SOURCE_OF_TRUTH.md §5–§9`.**
+
+---
+
 # PredictXta — Phase 5 Production Gate: Sports Data, Prediction Engine & Data Integrity
 
 **Status**: PASSED  

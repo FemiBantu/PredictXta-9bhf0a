@@ -1,3 +1,10 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **Firebase credential status and OAuth configuration in this document are correct.  
+> Canonical bundle IDs, OAuth redirect URIs, and provider hierarchy match `docs/PRODUCTION_SOURCE_OF_TRUTH.md`.**
+
+---
+
 # PredictXta — Phase 3: Firebase, Auth & Push Notifications Report
 
 Generated: 2026-09-08

@@ -1,3 +1,9 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **Deep-link routes, bundle IDs, and OAuth configuration in this document are correct and match `docs/PRODUCTION_SOURCE_OF_TRUTH.md §2 & §3`.**
+
+---
+
 # PredictXta Deep-Link & Authentication Audit Report
 
 Generated: 2026-09-08 (Phase 2 revision — corrected bundle identifiers)
