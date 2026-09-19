@@ -1,5 +1,25 @@
 # Firebase Setup Guide — PredictXta
 
+## Automated Validation
+
+Use the validator script to check both credential files at any time:
+
+```bash
+# Warning mode (CI default — non-blocking):
+node scripts/validate-firebase-credentials.js
+
+# Strict mode (hard-fail on placeholders — use before production builds):
+node scripts/validate-firebase-credentials.js --strict
+```
+
+The script checks:
+- Files exist at project root
+- Bundle/package IDs match `com.predictxta.sports`
+- Firebase project ID = `predictxta-c6bcb`
+- No placeholder strings (in `--strict` mode)
+
+---
+
 ## Architecture Overview
 
 PredictXta uses a **proxy architecture** — the mobile app does NOT use the native Firebase SDK.

@@ -12,7 +12,7 @@
     "scheme": "predictxta",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "sdkVersion": "54.0.0",
+    "sdkVersion": "57.0.0",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.predictxta.sports",
@@ -174,7 +174,7 @@
       "favicon": "./assets/logo.png",
       "name": "PredictXta - AI Sports Predictions",
       "shortName": "PredictXta",
-      "description": "AI-powered sports predictions, live scores, and expert analysis for 12+ sports.",
+      "description": "AI-powered sports predictions, live scores, and expert analysis for 13 sports.",
       "themeColor": "#070B14",
       "backgroundColor": "#070B14",
       "lang": "en",
@@ -220,7 +220,7 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": false,
-      "sdkVersionNote": "SDK 54 — meets Google Play API 36 requirement (deadline Aug 31 2026). Upgraded from SDK 53."
+      "sdkVersionNote": "SDK 57 — React Native 0.79, Hermes 0.12+, New Architecture stable. Meets Google Play API 36 requirement. package.json must be updated to expo@~57.0.0 react-native@0.79.2 react@19.0.0 — see docs/P0-P1-MIGRATION-CHECKLIST.md P0-1."
     },
     "extra": {
       "eas": {

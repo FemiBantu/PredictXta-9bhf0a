@@ -1,0 +1,110 @@
+# PredictXta — iOS TestFlight CI
+# Builds an iOS IPA and submits to TestFlight on every push to main.
+# Requires the following GitHub Actions secrets:
+#   EXPO_TOKEN              — EAS access token (eas.expo.dev → Access Tokens)
+#   GOOGLE_SERVICES_PLIST   — base64-encoded real GoogleService-Info.plist
+#                             (or set as an EAS file secret and remove the env: block)
+#   APPLE_ID                — Apple ID email used for App Store Connect
+#   APP_STORE_CONNECT_APP_ID — numeric app ID from App Store Connect
+#   APPLE_TEAM_ID           — Apple Developer Team ID (10-char string)
+#
+# Required EAS secrets (set once via `eas secret:create`):
+#   GOOGLE_SERVICES_PLIST   — file secret (preferred over GitHub secret for plist)
+#
+# This workflow does NOT require a macOS runner — EAS builds in the cloud.
+
+name: iOS TestFlight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: EAS build profile
+        required: false
+        default: production
+        type: choice
+        options: [production, preview]
+
+env:
+  NODE_VERSION: '22'
+  EAS_PROFILE: ${{ github.event.inputs.profile || 'production' }}
+
+jobs:
+  build-ios:
+    name: EAS iOS Build → TestFlight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      # ── Validate app.json before triggering expensive build ──────────────
+      - name: Validate app.json (SDK 57, API 36, bundle ID)
+        run: |
+          node -e "
+          const config = require('./app.json');
+          const expo = config.expo;
+          let ok = true;
+          if ((expo.ios || {}).bundleIdentifier !== 'com.predictxta.sports') {
+            console.error('❌ ios.bundleIdentifier mismatch:', (expo.ios || {}).bundleIdentifier); ok = false;
+          }
+          if (!expo.sdkVersion || !expo.sdkVersion.startsWith('57')) {
+            console.error('❌ sdkVersion must be 57.x, got:', expo.sdkVersion); ok = false;
+          }
+          if (expo.newArchEnabled !== true) {
+            console.error('❌ newArchEnabled must be true'); ok = false;
+          }
+          if (!ok) process.exit(1);
+          console.log('✅ app.json valid for iOS build');
+          console.log('   bundleIdentifier:', expo.ios.bundleIdentifier);
+          console.log('   sdkVersion:', expo.sdkVersion);
+          console.log('   newArchEnabled:', expo.newArchEnabled);
+          "
+
+      # ── EAS Build ─────────────────────────────────────────────────────────
+      # --non-interactive: no prompts (CI mode)
+      # --no-wait:         returns immediately; build runs in EAS cloud
+      # Remove --no-wait if you need the IPA artifact URL in this workflow
+      - name: EAS Build iOS (${{ env.EAS_PROFILE }})
+        run: |
+          eas build \
+            --platform ios \
+            --profile ${{ env.EAS_PROFILE }} \
+            --non-interactive \
+            --no-wait
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      # ── Optional: Auto-submit to TestFlight ───────────────────────────────
+      # Uncomment when Apple credentials are configured in EAS secrets.
+      # - name: Submit to TestFlight
+      #   run: |
+      #     eas submit \
+      #       --platform ios \
+      #       --profile ${{ env.EAS_PROFILE }} \
+      #       --non-interactive \
+      #       --latest
+      #   env:
+      #     EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

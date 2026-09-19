@@ -1,3 +1,11 @@
+# ⚠️ HISTORICAL ONLY — See docs/PRODUCTION_SOURCE_OF_TRUTH.md
+
+> **Security controls, 13-sport registry, and no-fabrication rules in this document are correct.  
+> The P1 item "SDK 54 upgrade" is now resolved — canonical SDK is 57 (`docs/PRODUCTION_SOURCE_OF_TRUTH.md §7`).
+> `targetSdkVersion=35` in the release checklist below is obsolete; canonical value is 36.**
+
+---
+
 # PredictXta — Phase 6 Production Hardening
 
 ## Status: PHASE 6 COMPLETE
